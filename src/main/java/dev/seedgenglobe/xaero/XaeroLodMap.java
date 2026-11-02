@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,7 +35,7 @@ public final class XaeroLodMap {
 	 * Version of what the LOD map stores per column; part of its folder name, so a SeedGenGlobe update that changes
 	 * how columns are read starts a fresh map instead of mixing old and new regions.
 	 */
-	static final int MAP_VERSION = 2;
+	static final int MAP_VERSION = 4;
 
 	private static @Nullable LodMapBuilder builder;
 	private static @Nullable XaeroLodWriter writer;
@@ -53,12 +52,15 @@ public final class XaeroLodMap {
 		SeedGenGlobe.LOGGER.info("SeedGenGlobe: Xaero's World Map detected, it gets the LOD surface map of Big Globe dimensions.");
 	}
 
+	private static long loggedAt = System.nanoTime(), loggedProgress;
+
 	/** Client thread, every tick. */
 	public static void tick(Minecraft minecraft) {
 		XaeroLodWriter writer = XaeroLodMap.writer;
 		if (writer == null || disabled) return;
 		try {
 			writer.tick(minecraft);
+			logProgress(writer);
 		}
 		catch (Throwable throwable) {
 			if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) throw error;
@@ -73,6 +75,22 @@ public final class XaeroLodMap {
 				SeedGenGlobe.LOGGER.error("SeedGenGlobe: the Xaero LOD map is off for the rest of this session. Distant Horizons generation is not affected.");
 			}
 		}
+	}
+
+	/** A line in the log every {@code statsLogSeconds} while the map is growing, like the generation summaries. */
+	private static void logProgress(XaeroLodWriter writer) {
+		int seconds = GlobeConfig.get().statsLogSeconds;
+		LodMapBuilder builder = XaeroLodMap.builder;
+		if (seconds <= 0 || builder == null || writer.target() == null) return;
+		long now = System.nanoTime();
+		if (now - loggedAt < seconds * 1_000_000_000L) return;
+		loggedAt = now;
+		long progress = builder.liveSections.get() + builder.builtSections.get() + builder.savedRegions.get() + writer.filledTiles;
+		if (progress == loggedProgress) return;
+		loggedProgress = progress;
+		List<String> lines = new ArrayList<>(builder.statusLines());
+		lines.addAll(writer.statusLines());
+		SeedGenGlobe.LOGGER.info("SeedGenGlobe: {}", String.join("; ", lines));
 	}
 
 	public static void onDisconnect() {
@@ -94,14 +112,7 @@ public final class XaeroLodMap {
 		if (writer == null || builder == null) return lines;
 		if (disabled) lines.add("Xaero LOD map: switched off after errors (see the log)");
 		lines.addAll(writer.statusLines());
-		long regions = builder.computedRegions.get();
-		if (regions > 0) {
-			lines.add(String.format(
-				Locale.ROOT,
-				"Xaero LOD map builder: %d regions computed this session (%d columns, %.0f ms per region)",
-				regions, builder.computedColumns.get(), builder.computeNanos.get() / 1.0e6D / regions
-			));
-		}
+		lines.addAll(builder.statusLines());
 		lines.add(XaeroVertigoGuard.status());
 		return lines;
 	}
@@ -148,9 +159,11 @@ public final class XaeroLodMap {
 		CanopyModel.Shared canopy = generator.canopy();
 		return new LodMapBuilder.Target(
 			store,
+			generator,
 			generator.terrain,
 			canopy,
 			generator.groundCover(),
+			generator.structures(),
 			generator.levelMinY(),
 			generator.levelMaxY(),
 			generator.topSkyLight(),
@@ -163,19 +176,22 @@ public final class XaeroLodMap {
 	 * One store per terrain: the folder name hashes Big Globe's column seed (the same on servers and on clients,
 	 * which never learn the world seed) together with the Big Globe version, since a different version may shape
 	 * terrain differently, and {@link #MAP_VERSION}. Whether Xaero draws flowers changes which block a column shows,
-	 * so both settings get a folder of their own.
+	 * so both settings get a folder of their own, and so do maps with and without structures (multiplayer clients
+	 * cannot place them) and with structures up to another detail level.
 	 */
 	static @Nullable LodMapStore store(GlobeWorldGenerator generator, ClientLevel level, boolean flowers) {
 		long seed = generator.terrain.worldInfo.seed();
 		String version = ModCompat.version("bigglobe") + "/" + MAP_VERSION;
 		long hash = seed * 0x9E3779B97F4A7C15L ^ version.hashCode() * 0xC2B2AE3D27D4EB4FL;
 		hash ^= hash >>> 29;
-		String dimension = level.dimension().identifier().toString().replace(':', '_').replace('/', '_') + (flowers ? "" : "-noflowers");
+		String dimension = level.dimension().identifier().toString().replace(':', '_').replace('/', '_')
+			+ (flowers ? "" : "-noflowers")
+			+ (generator.structures() != null ? "-s" + generator.structures().fullDetail() : "-nostructures");
 		Path directory = FabricLoader.getInstance().getGameDir().resolve("seedgenglobe").resolve("lodmap").resolve(Long.toHexString(hash)).resolve(dimension);
 		LodMapStore existing = STORES.get(directory);
 		if (existing != null) return existing;
 		try {
-			LodMapStore store = LodMapStore.open(directory, 16);
+			LodMapStore store = LodMapStore.open(directory, LodMapBuilder.STORE_CACHE_CELLS);
 			STORES.put(directory, store);
 			return store;
 		}

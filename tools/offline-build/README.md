@@ -9,7 +9,10 @@ jar and no Gradle/Loom. These tools made that possible and checked the result. U
    describe Minecraft's API.
 2. `StubGen <outDir> hierarchy.txt <prefixes> <jar...>` turns the referenced Minecraft and library members into
    compile-only stub classes. `hierarchy.txt` adds the class hierarchy, generic arities and the few members that
-   only SeedGenGlobe uses.
+   only SeedGenGlobe uses. `make-stubs.sh` compiles the three tools and regenerates the stubs into
+   `$WORK/stubgen/out` with the prefixes the release used (after a change to `hierarchy.txt`, for example).
+   Stub methods have erased signatures and constants are not stubbed (javac inlines them), so SeedGenGlobe casts
+   what generic Minecraft methods return and spells out a few flag values.
 3. `build-offline.sh` (project root) compiles SeedGenGlobe with javac 25 against the real Distant Horizons,
    Big Globe and Xaero's World Map and Minimap jars (Xaero's library comes nested in them), the Fabric API modules
    nested in Distant Horizons, Brigadier built from its public source, the hand-written stubs in `stubs/` (including
@@ -26,4 +29,6 @@ jar and no Gradle/Loom. These tools made that possible and checked the result. U
 Paths in the scripts default to the layout of that build machine (`WORK=/home/claude/work`); set `WORK`, `JAVAC`
 and `JAR` to use them elsewhere.
 
-For 1.1.0 the result was: 983 references resolved, 8 unverified (above), 0 errors.
+For 1.1.0 the result was: 983 references resolved, 8 unverified (above), 0 errors. For 1.2.0, which also reads a
+few of Distant Horizons' internal thread pool and config classes for its diagnostics (all of them resolved against
+the real Distant Horizons jar): 1396 resolved, the same 8 unverified, 0 errors.

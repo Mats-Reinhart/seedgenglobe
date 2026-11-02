@@ -18,6 +18,8 @@ import builderb0y.bigglobe.scripting.wrappers.entries.BiomeEntry;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.structures.LodStructures;
+import dev.seedgenglobe.structures.StructureFrame;
 
 /**
  * Computes one Distant Horizons section (64 x 64 LOD columns) of Big Globe terrain.
@@ -29,9 +31,9 @@ import dev.seedgenglobe.SeedGenGlobe;
  * <p>
  * Not thread safe: each worker thread borrows its own sampler.
  */
-public final class SectionSampler {
+public final class SectionSampler implements SampledColumns {
 
-	public static final int WIDTH = 64;
+	public static final int WIDTH = SampledColumns.WIDTH;
 
 	public final GlobeTerrain terrain;
 	private final QuadColumn quad;
@@ -39,13 +41,14 @@ public final class SectionSampler {
 	private final BlockState air = Blocks.AIR.defaultBlockState();
 	private final @Nullable CanopyModel canopy;
 	private final @Nullable GroundCover ground;
+	private final @Nullable StructureFrame structures;
 	private final UndergroundMode underground;
 	private final boolean useBigGlobeUndergroundSetting;
 	private final boolean sampleCenter;
 
 	public int lastErrors;
 
-	public SectionSampler(GlobeTerrain terrain, @Nullable CanopyModel.Shared canopy, @Nullable GroundCover.Shared ground) {
+	public SectionSampler(GlobeTerrain terrain, @Nullable CanopyModel.Shared canopy, @Nullable GroundCover.Shared ground, @Nullable LodStructures structures) {
 		this.terrain = terrain;
 		GlobeConfig config = GlobeConfig.get();
 		ScriptedColumn.Params params = new ScriptedColumn.Params(0, 0, terrain.worldInfo, hints(0, UndergroundMode.FILL));
@@ -68,6 +71,7 @@ public final class SectionSampler {
 			default -> UndergroundMode.FILL;
 		};
 		this.sampleCenter = config.sampleCellCenter;
+		this.structures = structures != null ? structures.newFrame(this) : null;
 	}
 
 	private static Hints hints(int detail, UndergroundMode underground) {
@@ -78,6 +82,7 @@ public final class SectionSampler {
 		return this.useBigGlobeUndergroundSetting ? ColumnUsage.RAW_GENERATION.dhHints(detail) : hints(detail, this.underground);
 	}
 
+	@Override
 	public ColumnProfile profile(int relX, int relZ) {
 		return this.profiles[relX * WIDTH + relZ];
 	}
@@ -87,6 +92,7 @@ public final class SectionSampler {
 		return originX + (relX << detail) + this.halfCell(detail);
 	}
 
+	@Override
 	public int halfCell(int detail) {
 		return this.sampleCenter && detail > 0 ? 1 << (detail - 1) : 0;
 	}
@@ -105,12 +111,26 @@ public final class SectionSampler {
 		int genMaxY = this.terrain.maxY;
 		this.lastErrors = 0;
 		if (this.ground != null) this.ground.begin();
+		boolean structures = false;
+		if (this.structures != null) {
+			try {
+				structures = this.structures.begin(originX, originZ, detail, levelMinY, levelMaxY, topSkyLight);
+			}
+			catch (Throwable throwable) {
+				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
+					throw error;
+				}
+				this.lastErrors++;
+				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
+			}
+		}
 		for (int relZ = 0; relZ < WIDTH; relZ += 2) {
 			for (int relX = 0; relX < WIDTH; relX += 2) {
 				int x = originX + (relX << detail) + half;
 				int z = originZ + (relZ << detail) + half;
 				try {
 					this.quad.at(params, x, z, step);
+					if (structures) this.structures.override(this.quad, x, z, step);
 					QuadList lists = new QuadList();
 					lists.createNew(genMinY, genMaxY);
 					QuadHolder.generate(this.quad, lists, this.terrain.layer);
@@ -130,6 +150,18 @@ public final class SectionSampler {
 					this.profile(relX,     relZ + 1).fillAir(this.air, levelMinY, levelMaxY, topSkyLight);
 					this.profile(relX + 1, relZ + 1).fillAir(this.air, levelMinY, levelMaxY, topSkyLight);
 				}
+			}
+		}
+		if (structures) {
+			try {
+				this.structures.place();
+			}
+			catch (Throwable throwable) {
+				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
+					throw error;
+				}
+				this.lastErrors++;
+				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
 			}
 		}
 		if (this.canopy != null) {
@@ -224,7 +256,13 @@ public final class SectionSampler {
 		return this.terrain.fallbackBiome;
 	}
 
+	@Override
 	public BlockState air() {
 		return this.air;
+	}
+
+	/** Whether structure blocks cover the terrain of LOD column (relX, relZ) of the section last sampled. */
+	public boolean occupied(int relX, int relZ) {
+		return this.structures != null && this.structures.occupied(relX, relZ);
 	}
 }

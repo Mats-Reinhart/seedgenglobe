@@ -1,39 +1,36 @@
 package dev.seedgenglobe.xaero;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import org.jetbrains.annotations.Nullable;
 
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.Property;
 
 /**
- * The surface map of one Xaero region (512 x 512 blocks) at one LOD detail level: every cell holds what Xaero's
- * World Map would record for the top of that column, i.e. the block it shows, its height, the water (or ice over
- * water) above it and the biome. A cell covers 2^detail x 2^detail blocks.
+ * The surface map of one Xaero region (512 x 512 blocks): every cell holds what Xaero's World Map would record for
+ * the top of that column, i.e. the block it shows, its height, the water (or ice over water) above it and the biome.
+ * A cell covers 2^detail x 2^detail blocks.
  * <p>
- * Immutable once built; built and read on background threads, read by the map writer on the render thread.
+ * The region is put together from LOD sections of different detail levels, so each cell also remembers the detail
+ * level of the data it came from: the region's own, or a coarser one whose cell was copied into several of these.
+ * <p>
+ * An immutable snapshot of a {@link RegionCanvas}; built on the map builder thread, read by the map writer on the
+ * render thread. Stored by {@link LodMapStore} in the format of {@link LodRegionCodec}.
  */
 public final class LodRegion {
 
 	public static final int REGION_BLOCKS = 512;
-	static final int FORMAT = 2;
+	/** One cell per region. */
+	public static final int MAX_DETAIL = 9;
 	static final short EMPTY = -1;
+	/** Source detail of a cell without data; greater than any real detail level. */
+	public static final int NO_SOURCE = 127;
 
 	public final int regionX, regionZ, detail, cells;
+	/** Counts up every time new data is saved for the region; the writer fills a region again when it changes. */
+	public final long revision;
+	/** The coarsest source over all cells, or {@link #NO_SOURCE} while any cell is still empty. */
+	public final int maxSource;
 	final BlockState[] statePalette;
 	final ResourceKey<Biome>[] biomePalette;
 	/** Index into {@link #statePalette}, or {@link #EMPTY} when the column could not be computed. */
@@ -50,12 +47,15 @@ public final class LodRegion {
 	final short[] overlay2;
 	final byte[] overlayDepth2;
 	final byte[] light;
+	/** Detail level of the LOD section each cell was taken from ({@link #NO_SOURCE} when empty). */
+	final byte[] source;
 
-	LodRegion(int regionX, int regionZ, int detail, BlockState[] statePalette, ResourceKey<Biome>[] biomePalette, short[] state, short[] height, short[] topHeight, short[] biome, short[] overlay, byte[] overlayDepth, short[] overlay2, byte[] overlayDepth2, byte[] light) {
+	LodRegion(int regionX, int regionZ, int detail, long revision, BlockState[] statePalette, ResourceKey<Biome>[] biomePalette, short[] state, short[] height, short[] topHeight, short[] biome, short[] overlay, byte[] overlayDepth, short[] overlay2, byte[] overlayDepth2, byte[] light, byte[] source) {
 		this.regionX = regionX;
 		this.regionZ = regionZ;
 		this.detail = detail;
 		this.cells = REGION_BLOCKS >> detail;
+		this.revision = revision;
 		this.statePalette = statePalette;
 		this.biomePalette = biomePalette;
 		this.state = state;
@@ -67,6 +67,19 @@ public final class LodRegion {
 		this.overlay2 = overlay2;
 		this.overlayDepth2 = overlayDepth2;
 		this.light = light;
+		this.source = source;
+		this.maxSource = maxSource(source);
+	}
+
+	static int maxSource(byte[] source) {
+		int max = 0;
+		for (byte value : source) {
+			if (value > max) {
+				max = value;
+				if (max >= NO_SOURCE) break;
+			}
+		}
+		return max;
 	}
 
 	/** Cell index of the block at (x, z) relative to the region's corner (0..511). */
@@ -97,6 +110,80 @@ public final class LodRegion {
 		return index < 0 ? null : this.biomePalette[index];
 	}
 
+	int sourceAt(int cell) {
+		return this.source[cell];
+	}
+
+	/**
+	 * The coarsest source detail among the cells under the block square (localX, localZ) .. +size, or
+	 * {@link #NO_SOURCE} when any of them is empty. Xaero tiles are 16 blocks wide.
+	 */
+	int areaSource(int localX, int localZ, int size) {
+		return areaSource(this.source, this.detail, this.cells, localX, localZ, localX + size, localZ + size);
+	}
+
+	/** 8 x 8 summary of the region: the coarsest source in each 64 block square (see {@link #coverage(byte[], int, int)}). */
+	byte[] coverage() {
+		return coverage(this.source, this.detail, this.cells);
+	}
+
+	/**
+	 * The coarsest source among the cells covering the region-local block rectangle [minX, maxX) x [minZ, maxZ),
+	 * or {@link #NO_SOURCE} when any of them is empty.
+	 */
+	static int areaSource(byte[] source, int detail, int cells, int minX, int minZ, int maxX, int maxZ) {
+		int firstX = Math.max(minX, 0) >> detail, lastX = (Math.min(maxX, REGION_BLOCKS) - 1) >> detail;
+		int firstZ = Math.max(minZ, 0) >> detail, lastZ = (Math.min(maxZ, REGION_BLOCKS) - 1) >> detail;
+		int max = 0;
+		for (int cellX = firstX; cellX <= lastX; cellX++) {
+			int row = cellX * cells;
+			for (int cellZ = firstZ; cellZ <= lastZ; cellZ++) {
+				int value = source[row + cellZ];
+				if (value > max) {
+					max = value;
+					if (max >= NO_SOURCE) return NO_SOURCE;
+				}
+			}
+		}
+		return max;
+	}
+
+	/** Width in blocks of the squares of a {@link #coverage} summary: the narrowest LOD section. */
+	static final int COVERAGE_BLOCKS = 64;
+	static final int COVERAGE_WIDTH = REGION_BLOCKS / COVERAGE_BLOCKS;
+
+	/**
+	 * The coarsest source in each of the 8 x 8 squares of 64 blocks of a region, index x * 8 + z: enough to tell,
+	 * without the region's cells, whether a LOD section of some detail level would add anything to it.
+	 */
+	static byte[] coverage(byte[] source, int detail, int cells) {
+		byte[] coverage = new byte[COVERAGE_WIDTH * COVERAGE_WIDTH];
+		for (int x = 0; x < COVERAGE_WIDTH; x++) {
+			for (int z = 0; z < COVERAGE_WIDTH; z++) {
+				coverage[x * COVERAGE_WIDTH + z] = (byte)(areaSource(source, detail, cells, x * COVERAGE_BLOCKS, z * COVERAGE_BLOCKS, (x + 1) * COVERAGE_BLOCKS, (z + 1) * COVERAGE_BLOCKS));
+			}
+		}
+		return coverage;
+	}
+
+	/** The coarsest value of a coverage summary over the region-local block rectangle [minX, maxX) x [minZ, maxZ). */
+	static int coverageSource(byte[] coverage, int minX, int minZ, int maxX, int maxZ) {
+		int firstX = Math.max(minX, 0) / COVERAGE_BLOCKS, lastX = (Math.min(maxX, REGION_BLOCKS) - 1) / COVERAGE_BLOCKS;
+		int firstZ = Math.max(minZ, 0) / COVERAGE_BLOCKS, lastZ = (Math.min(maxZ, REGION_BLOCKS) - 1) / COVERAGE_BLOCKS;
+		int max = 0;
+		for (int x = firstX; x <= lastX; x++) {
+			for (int z = firstZ; z <= lastZ; z++) {
+				max = Math.max(max, coverage[x * COVERAGE_WIDTH + z]);
+			}
+		}
+		return max;
+	}
+
+	/** Number of cells, for memory budgets. */
+	int size() {
+		return this.cells * this.cells;
+	}
+
 	public static long key(int regionX, int regionZ) {
 		return ((long)(regionX) & 0xFFFFFFFFL) | ((long)(regionZ) << 32);
 	}
@@ -107,194 +194,5 @@ public final class LodRegion {
 
 	public static int keyZ(long key) {
 		return (int)(key >> 32);
-	}
-
-	// ------------------------------------------------------------------------------------------------ building
-
-	/** Collects cells; palettes grow as states and biomes are added. Not thread safe. */
-	static final class Builder {
-
-		final int regionX, regionZ, detail, cells;
-		final Map<BlockState, Short> states = new HashMap<>();
-		final List<BlockState> statePalette = new ArrayList<>();
-		final Map<ResourceKey<Biome>, Short> biomes = new HashMap<>();
-		final List<ResourceKey<Biome>> biomePalette = new ArrayList<>();
-		final short[] state, height, topHeight, biome, overlay, overlay2;
-		final byte[] overlayDepth, overlayDepth2, light;
-
-		Builder(int regionX, int regionZ, int detail) {
-			this.regionX = regionX;
-			this.regionZ = regionZ;
-			this.detail = detail;
-			this.cells = REGION_BLOCKS >> detail;
-			int size = this.cells * this.cells;
-			this.state = new short[size];
-			this.height = new short[size];
-			this.topHeight = new short[size];
-			this.biome = new short[size];
-			this.overlay = new short[size];
-			this.overlayDepth = new byte[size];
-			this.overlay2 = new short[size];
-			this.overlayDepth2 = new byte[size];
-			this.light = new byte[size];
-			java.util.Arrays.fill(this.state, EMPTY);
-			java.util.Arrays.fill(this.biome, (short)(-1));
-			java.util.Arrays.fill(this.overlay, (short)(-1));
-			java.util.Arrays.fill(this.overlay2, (short)(-1));
-		}
-
-		short stateIndex(BlockState blockState) {
-			Short index = this.states.get(blockState);
-			if (index == null) {
-				index = (short)(this.statePalette.size());
-				this.statePalette.add(blockState);
-				this.states.put(blockState, index);
-			}
-			return index;
-		}
-
-		short biomeIndex(@Nullable ResourceKey<Biome> key) {
-			if (key == null) return -1;
-			Short index = this.biomes.get(key);
-			if (index == null) {
-				index = (short)(this.biomePalette.size());
-				this.biomePalette.add(key);
-				this.biomes.put(key, index);
-			}
-			return index;
-		}
-
-		void set(int cellX, int cellZ, MapPixel pixel) {
-			int cell = cellX * this.cells + cellZ;
-			if (pixel.state == null) {
-				this.state[cell] = EMPTY;
-				return;
-			}
-			this.state[cell] = this.stateIndex(pixel.state);
-			this.height[cell] = (short)(pixel.height);
-			this.topHeight[cell] = (short)(pixel.topHeight);
-			this.biome[cell] = this.biomeIndex(pixel.biome);
-			this.overlay[cell] = pixel.overlay != null ? this.stateIndex(pixel.overlay) : -1;
-			this.overlayDepth[cell] = (byte)(Math.min(pixel.overlayDepth, 255));
-			this.overlay2[cell] = pixel.overlay != null && pixel.overlay2 != null ? this.stateIndex(pixel.overlay2) : -1;
-			this.overlayDepth2[cell] = (byte)(Math.min(pixel.overlayDepth2, 255));
-			this.light[cell] = pixel.light;
-		}
-
-		@SuppressWarnings("unchecked")
-		LodRegion build() {
-			return new LodRegion(
-				this.regionX, this.regionZ, this.detail,
-				this.statePalette.toArray(new BlockState[0]),
-				this.biomePalette.toArray(new ResourceKey[0]),
-				this.state, this.height, this.topHeight, this.biome, this.overlay, this.overlayDepth, this.overlay2, this.overlayDepth2, this.light
-			);
-		}
-	}
-
-	// ------------------------------------------------------------------------------------------------ storage
-
-	void write(DataOutputStream out) throws IOException {
-		out.writeInt(FORMAT);
-		out.writeInt(this.regionX);
-		out.writeInt(this.regionZ);
-		out.writeByte(this.detail);
-		out.writeShort(this.statePalette.length);
-		for (BlockState blockState : this.statePalette) out.writeUTF(stateToString(blockState));
-		out.writeShort(this.biomePalette.length);
-		for (ResourceKey<Biome> key : this.biomePalette) out.writeUTF(key.identifier().toString());
-		int size = this.cells * this.cells;
-		for (int i = 0; i < size; i++) {
-			out.writeShort(this.state[i]);
-			if (this.state[i] == EMPTY) continue;
-			out.writeShort(this.height[i]);
-			out.writeShort(this.topHeight[i]);
-			out.writeShort(this.biome[i]);
-			out.writeShort(this.overlay[i]);
-			out.writeByte(this.overlayDepth[i]);
-			out.writeShort(this.overlay2[i]);
-			out.writeByte(this.overlayDepth2[i]);
-			out.writeByte(this.light[i]);
-		}
-	}
-
-	/** @return null when the data was written by another format version or names blocks that no longer exist */
-	@SuppressWarnings("unchecked")
-	static @Nullable LodRegion read(DataInputStream in, int expectedX, int expectedZ) throws IOException {
-		if (in.readInt() != FORMAT) return null;
-		int regionX = in.readInt(), regionZ = in.readInt();
-		if (regionX != expectedX || regionZ != expectedZ) return null;
-		int detail = in.readByte();
-		if (detail < 0 || detail > 9) return null;
-		int stateCount = in.readUnsignedShort();
-		BlockState[] states = new BlockState[stateCount];
-		for (int i = 0; i < stateCount; i++) {
-			BlockState blockState = stateFromString(in.readUTF());
-			if (blockState == null) return null;
-			states[i] = blockState;
-		}
-		int biomeCount = in.readUnsignedShort();
-		ResourceKey<Biome>[] biomes = new ResourceKey[biomeCount];
-		for (int i = 0; i < biomeCount; i++) {
-			Identifier identifier = Identifier.tryParse(in.readUTF());
-			if (identifier == null) return null;
-			biomes[i] = ResourceKey.create(Registries.BIOME, identifier);
-		}
-		int cells = REGION_BLOCKS >> detail;
-		int size = cells * cells;
-		short[] state = new short[size], height = new short[size], topHeight = new short[size], biome = new short[size], overlay = new short[size], overlay2 = new short[size];
-		byte[] overlayDepth = new byte[size], overlayDepth2 = new byte[size], light = new byte[size];
-		for (int i = 0; i < size; i++) {
-			state[i] = in.readShort();
-			if (state[i] == EMPTY) {
-				biome[i] = -1;
-				overlay[i] = -1;
-				overlay2[i] = -1;
-				continue;
-			}
-			if (state[i] < 0 || state[i] >= stateCount) return null;
-			height[i] = in.readShort();
-			topHeight[i] = in.readShort();
-			biome[i] = in.readShort();
-			overlay[i] = in.readShort();
-			overlayDepth[i] = in.readByte();
-			overlay2[i] = in.readShort();
-			overlayDepth2[i] = in.readByte();
-			light[i] = in.readByte();
-			if (biome[i] >= biomeCount || overlay[i] >= stateCount || overlay2[i] >= stateCount) return null;
-		}
-		return new LodRegion(regionX, regionZ, detail, states, biomes, state, height, topHeight, biome, overlay, overlayDepth, overlay2, overlayDepth2, light);
-	}
-
-	/** "namespace:block[property=value,...]" with properties in the block's own order. */
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	static String stateToString(BlockState blockState) {
-		StringBuilder builder = new StringBuilder(String.valueOf(BuiltInRegistries.BLOCK.getKey(blockState.getBlock())));
-		boolean first = true;
-		for (Object object : (Iterable<?>)(Object)(blockState.getProperties())) {
-			if (!(object instanceof Property<?> property)) continue;
-			builder.append(first ? '[' : ',');
-			first = false;
-			builder.append(property.getName()).append('=').append(((Property)(property)).getName(blockState.getValue(property)));
-		}
-		if (!first) builder.append(']');
-		return builder.toString();
-	}
-
-	static @Nullable BlockState stateFromString(String text) {
-		int bracket = text.indexOf('[');
-		String id = bracket < 0 ? text : text.substring(0, bracket);
-		Identifier identifier = Identifier.tryParse(id);
-		if (identifier == null) return null;
-		Object value = BuiltInRegistries.BLOCK.getValue(identifier);
-		if (!(value instanceof Block block) || (block == Blocks.AIR && !identifier.getPath().equals("air"))) return null;
-		BlockState blockState = block.defaultBlockState();
-		if (bracket >= 0 && text.endsWith("]")) {
-			for (String pair : text.substring(bracket + 1, text.length() - 1).split(",")) {
-				int equals = pair.indexOf('=');
-				if (equals > 0) blockState = dev.seedgenglobe.terrain.BlockStates.with(blockState, pair.substring(0, equals), pair.substring(equals + 1));
-			}
-		}
-		return blockState;
 	}
 }

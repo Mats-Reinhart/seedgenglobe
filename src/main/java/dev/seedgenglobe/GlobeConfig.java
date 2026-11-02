@@ -42,6 +42,16 @@ public final class GlobeConfig {
 	 */
 	public boolean groundCover = true;
 	/**
+	 * Put Big Globe's structures into generated LODs: the terrain they shape and the blocks they place, from obelisks
+	 * and mega trees to villages, houses and lakes. Needs the world seed, so only servers and singleplayer do this.
+	 */
+	public boolean structures = true;
+	/**
+	 * Coarsest detail level that gets every structure (5: LOD cells 32 blocks wide). Two levels coarser still get
+	 * the large structures (lakes, mega trees); obelisks are in LODs of every detail level.
+	 */
+	public int structureDetail = 5;
+	/**
 	 * Let generated sections also rewrite their coarser parent sections, as Distant Horizons does for other generators.
 	 * Off (the default) avoids holes while LODs are still being built and saves a lot of database work.
 	 */
@@ -52,6 +62,13 @@ public final class GlobeConfig {
 	public boolean clientGenerationWithDhServer = false;
 	/** Worker threads for client-side generation. 0 picks a value from the CPU count and the other mods that are installed. */
 	public int clientThreads = 0;
+	/**
+	 * Threads LOD sections are generated on. 0 (automatic): SeedGenGlobe's own threads, as many as Distant Horizons
+	 * uses, slightly below normal priority. -1: Distant Horizons' own world generator threads, which it shares with its
+	 * file and render work (generation gets a thread last) and pauses while the camera moves faster than 20 blocks/s.
+	 * Any other number: that many threads of SeedGenGlobe's own.
+	 */
+	public int generatorThreads = 0;
 	/** With Vertigo installed, keep chunks whose top or bottom sections were not synced from overwriting LODs with flat cuts. */
 	public boolean vertigoGuard = true;
 	/** Tint distant grass, leaves and water with Big Globe's own colour scripts instead of flat per-biome colours. */
@@ -62,8 +79,8 @@ public final class GlobeConfig {
 	public int xaeroLodMapRadius = 0;
 	/** Override priority used when registering with Distant Horizons. Must differ from every other generator override. */
 	public int generatorPriority = 2026;
-	/** Log a throughput summary every this many generated sections (0 disables). */
-	public int statsInterval = 500;
+	/** Log a generation summary at most this often, in seconds, while sections are generated (0 disables). */
+	public int statsLogSeconds = 60;
 
 	public static GlobeConfig get() {
 		return current;
@@ -104,23 +121,28 @@ public final class GlobeConfig {
 		this.sampleCellCenter = bool(p, "sampleCellCenter", this.sampleCellCenter);
 		this.trees = bool(p, "trees", this.trees);
 		this.groundCover = bool(p, "groundCover", this.groundCover);
+		this.structures = bool(p, "structures", this.structures);
+		this.structureDetail = integer(p, "structureDetail", this.structureDetail);
 		this.updateParentSections = bool(p, "updateParentSections", this.updateParentSections);
 		this.clientGeneration = bool(p, "clientGeneration", this.clientGeneration);
 		this.clientGenerationWithDhServer = bool(p, "clientGenerationWithDhServer", this.clientGenerationWithDhServer);
 		this.clientThreads = integer(p, "clientThreads", this.clientThreads);
+		this.generatorThreads = integer(p, "generatorThreads", this.generatorThreads);
 		this.vertigoGuard = bool(p, "vertigoGuard", this.vertigoGuard);
 		this.bigGlobeColors = bool(p, "bigGlobeColors", this.bigGlobeColors);
 		this.xaeroLodMap = bool(p, "xaeroLodMap", this.xaeroLodMap);
 		this.xaeroLodMapRadius = integer(p, "xaeroLodMapRadius", this.xaeroLodMapRadius);
 		this.generatorPriority = integer(p, "generatorPriority", this.generatorPriority);
-		this.statsInterval = integer(p, "statsInterval", this.statsInterval);
+		this.statsLogSeconds = integer(p, "statsLogSeconds", this.statsLogSeconds);
 	}
 
 	private void clamp() {
 		this.maxDetailLevel = Math.max(0, Math.min(15, this.maxDetailLevel));
+		this.structureDetail = Math.max(0, Math.min(15, this.structureDetail));
 		this.clientThreads = Math.max(0, Math.min(64, this.clientThreads));
 		this.generatorPriority = Math.max(1, this.generatorPriority);
-		this.statsInterval = Math.max(0, this.statsInterval);
+		this.generatorThreads = Math.max(-1, Math.min(64, this.generatorThreads));
+		this.statsLogSeconds = Math.max(0, Math.min(86_400, this.statsLogSeconds));
 		this.xaeroLodMapRadius = Math.max(0, Math.min(4096, this.xaeroLodMapRadius));
 		switch (this.undergroundMode) {
 			case "none", "fill", "carve", "decorate", "bigglobe" -> {}
@@ -139,16 +161,19 @@ public final class GlobeConfig {
 			entry(w, "sampleCellCenter", this.sampleCellCenter, "Sample the centre of each LOD cell instead of its corner.");
 			entry(w, "trees", this.trees, "Approximate tree canopies so forests remain visible in the distance.");
 			entry(w, "groundCover", this.groundCover, "Big Globe's grass, flowers, leaf litter and similar ground cover on generated LODs, so they match LODs of explored chunks.");
+			entry(w, "structures", this.structures, "Big Globe's structures in generated LODs (obelisks, mega trees, villages, houses, lakes, ...): the terrain they shape and the blocks they place. Server and singleplayer only.");
+			entry(w, "structureDetail", this.structureDetail, "Coarsest detail level (0-15) that gets every structure (5 = LOD cells 32 blocks wide). Two levels coarser still get lakes and mega trees; obelisks are in every LOD.");
 			entry(w, "updateParentSections", this.updateParentSections, "Let generated sections rewrite their coarser parents too (Distant Horizons' default). Off avoids holes while LODs build.");
 			entry(w, "clientGeneration", this.clientGeneration, "Multiplayer: generate LODs on the client when the server has no Distant Horizons.");
 			entry(w, "clientGenerationWithDhServer", this.clientGenerationWithDhServer, "Multiplayer: generate locally even when the server runs Distant Horizons.");
-			entry(w, "clientThreads", this.clientThreads, "Client generation threads, 0 = automatic.");
+			entry(w, "clientThreads", this.clientThreads, "Client generation: sections generated at once, 0 = automatic.");
+			entry(w, "generatorThreads", this.generatorThreads, "Threads that generate LOD sections. 0 = automatic (SeedGenGlobe's own, as many as Distant Horizons uses, slightly below normal priority), -1 = Distant Horizons' own world generator threads (shared with its other work and paused while the camera moves faster than 20 blocks/s), N = N threads of SeedGenGlobe's own.");
 			entry(w, "vertigoGuard", this.vertigoGuard, "With Vertigo, ignore chunks whose terrain was cut off by vertical syncing.");
 			entry(w, "bigGlobeColors", this.bigGlobeColors, "Use Big Globe's grass, foliage and water colour scripts for LODs.");
 			entry(w, "xaeroLodMap", this.xaeroLodMap, "Xaero's World Map and Minimap: also map the surface of the whole LOD radius, from Big Globe's terrain scripts.");
 			entry(w, "xaeroLodMapRadius", this.xaeroLodMapRadius, "Radius of that map in chunks, 0 = Distant Horizons' render distance. Far parts use one map pixel per 2 to 64 blocks, like LODs.");
 			entry(w, "generatorPriority", this.generatorPriority, "Distant Horizons override priority. Higher than Big Globe's built-in generator (10).");
-			entry(w, "statsInterval", this.statsInterval, "Log a throughput summary every N sections, 0 = never.");
+			entry(w, "statsLogSeconds", this.statsLogSeconds, "Log a generation summary (rate, threads, Distant Horizons' queues) at most every N seconds while generating, 0 = never.");
 		}
 	}
 
@@ -181,8 +206,10 @@ public final class GlobeConfig {
 			+ ", underground=" + this.undergroundMode
 			+ ", trees=" + this.trees
 			+ ", groundCover=" + this.groundCover
+			+ ", structures=" + (this.structures ? "up to detail " + this.structureDetail : "off")
 			+ ", parentUpdates=" + this.updateParentSections
 			+ ", cellCentre=" + this.sampleCellCenter
+			+ ", threads=" + (this.generatorThreads < 0 ? "DH" : this.generatorThreads == 0 ? "auto" : String.valueOf(this.generatorThreads))
 			+ ", clientGeneration=" + this.clientGeneration
 			+ ", vertigoGuard=" + this.vertigoGuard
 			+ ", colours=" + this.bigGlobeColors

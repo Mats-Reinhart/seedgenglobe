@@ -31,6 +31,7 @@ import builderb0y.bigglobe.features.FlowerControllerFeature;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.structures.LodStructures;
 import dev.seedgenglobe.terrain.GlobeTerrain;
 import dev.seedgenglobe.terrain.GroundCover;
 
@@ -109,7 +110,8 @@ public final class DhBridge {
 		GroundCover.Shared ground = GlobeConfig.get().groundCover && isOverworldLike(generator)
 			? GroundCover.Shared.create(terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), level.getSeed(), overworldFlowers(level))
 			: null;
-		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground);
+		LodStructures structures = LodStructures.create(level, generator, dimension);
+		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground, structures);
 		if (register(wrapper, globe)) {
 			SERVER_GENERATORS.put(wrapper, globe);
 			SeedGenGlobe.LOGGER.info(

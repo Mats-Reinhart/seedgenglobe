@@ -6,6 +6,10 @@
 #  3. GroundCoverTest: the ground cover decorators and Distant Horizons' 2 x 2 merge, on the real compiled classes.
 #  4. XaeroPixelTest: reading a column the way Xaero's World Map reads a chunk column, against the same fakes.
 #  5. LodMapGeometryTest: the region rings, keys, distances, detail levels and tile rules of the Xaero LOD map.
+#  6. CaptureViewTest: the sample points of a LOD section and the section structures are placed into (reads, kept
+#     writes, heightmaps, relit columns), against the same fakes as ColumnProfileTest.
+#  7. LodCanvasTest: how LOD sections of every detail level are merged into map regions (finest data wins, splitting
+#     cells, snapshots, per-tile detail, coverage), against a block-by-block model, on the same fakes.
 # Run build-offline.sh first.
 set -euo pipefail
 
@@ -22,10 +26,18 @@ mkdir -p "$OUT/fakes" "$OUT/real"
 	$(find "$HERE/src/testFakes/java" -name '*.java') \
 	"$HERE"/stubs/org/jetbrains/annotations/*.java \
 	"$HERE/src/main/java/dev/seedgenglobe/terrain/ColumnProfile.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/terrain/SampledColumns.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/structures/SampleGrid.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/structures/CaptureView.java" \
 	"$HERE/src/main/java/dev/seedgenglobe/xaero/MapPixel.java" \
-	"$HERE/src/main/java/dev/seedgenglobe/xaero/XaeroPixel.java"
+	"$HERE/src/main/java/dev/seedgenglobe/xaero/XaeroPixel.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/xaero/MapSection.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/xaero/LodRegion.java" \
+	"$HERE/src/main/java/dev/seedgenglobe/xaero/RegionCanvas.java"
 "$JDK/bin/java" -ea -cp "$OUT/fakes" dev.seedgenglobe.terrain.ColumnProfileTest
 "$JDK/bin/java" -ea -cp "$OUT/fakes" dev.seedgenglobe.xaero.XaeroPixelTest
+"$JDK/bin/java" -ea -cp "$OUT/fakes" dev.seedgenglobe.structures.CaptureViewTest
+"$JDK/bin/java" -ea -cp "$OUT/fakes" dev.seedgenglobe.xaero.LodCanvasTest
 
 CP="$HERE/build/classes:$HERE/build/stubs:$WORK/libs/DistantHorizons-3.0.3-b-26.1.2-atlasfix.jar:$WORK/libs/BigGlobe-6.3.0-MC26.1.2.jar"
 CP="$CP:$WORK/libs/xaeroworldmap-fabric-26.1.2-1.47.2.jar:$WORK/libs/xaerominimap-fabric-26.1.2-26.6.2.jar"

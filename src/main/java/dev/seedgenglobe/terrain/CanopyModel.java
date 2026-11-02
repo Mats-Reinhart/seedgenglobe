@@ -346,7 +346,8 @@ public final class CanopyModel {
 
 	private void layLeaves(int rx, int rz, PaletteInfo palette, int bottom, int top, boolean snowy) {
 		ColumnProfile profile = this.sampler.profile(rx, rz);
-		if (profile.count == 0) return;
+		// no trees grow where a structure stands
+		if (profile.count == 0 || this.sampler.occupied(rx, rz)) return;
 		// never bury terrain: everything above a column's surface is air, so leaves only go there
 		bottom = Math.max(bottom, profile.surfaceTop);
 		if (top <= bottom) return;
@@ -359,7 +360,7 @@ public final class CanopyModel {
 
 	private void layTrunk(int rx, int rz, PaletteInfo palette, int groundY, int bottom) {
 		ColumnProfile profile = this.sampler.profile(rx, rz);
-		if (profile.count == 0) return;
+		if (profile.count == 0 || this.sampler.occupied(rx, rz)) return;
 		int from = Math.max(groundY, profile.surfaceTop);
 		if (bottom <= from) return;
 		profile.overlay(palette.log, from, bottom, skyAt(profile, from), 0);
