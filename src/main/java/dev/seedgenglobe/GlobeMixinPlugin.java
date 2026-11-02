@@ -17,41 +17,46 @@ import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
 /**
- * Decides which of SeedGenGlobe's Distant Horizons mixins to apply.
+ * Decides which of SeedGenGlobe's Distant Horizons and Xaero's map mixins to apply.
  * <p>
- * The mixins touch Distant Horizons internals that are not part of its API, so before applying one this plugin
- * reads the target class file (without loading it) and checks that every field and method the mixin relies on is
- * present with the expected type. A mixin that does not fit the installed Distant Horizons build is skipped with
- * a log line instead of crashing the game; the generator itself only uses DH's public API and keeps working.
+ * The mixins touch internals that are not part of those mods' APIs, so before applying one this plugin reads the
+ * target class file (without loading it) and checks that every field, method and call the mixin relies on is
+ * present with the expected type. A mixin that does not fit the installed build is skipped with a log line instead
+ * of crashing the game; the generator itself only uses DH's public API and keeps working.
  */
 public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 
 	private static final String DH = "com/seibel/distanthorizons/";
 
-	/** mixin simple name -> required members, each "Owner#name#descriptor" (descriptor of a field or a method). */
-	private static final Map<String, String[]> REQUIREMENTS = Map.of(
-		"DhClientLevelMixin", new String[] {
+	private static final String MC_GET_CHUNK = "(IILnet/minecraft/world/level/chunk/status/ChunkStatus;Z)Lnet/minecraft/world/level/chunk/ChunkAccess;";
+
+	/**
+	 * mixin simple name -> requirements, each "Owner#name#descriptor" (a field or a method that must exist) or
+	 * "Owner#method#*#CallOwner.callName(callDescriptor)" (a method whose code must contain that call).
+	 */
+	private static final Map<String, String[]> REQUIREMENTS = Map.ofEntries(
+		Map.entry("DhClientLevelMixin", new String[] {
 			DH + "core/level/DhClientLevel#shouldDoWorldGen#()Z",
 			DH + "core/level/DhClientLevel#networkState#L" + DH + "core/multiplayer/client/ClientNetworkState;",
-		},
-		"RemoteWorldRetrievalQueueMixin", new String[] {
+		}),
+		Map.entry("RemoteWorldRetrievalQueueMixin", new String[] {
 			DH + "core/generation/queues/RemoteWorldRetrievalQueue#submitRetrievalTask#(JB)Ljava/util/concurrent/CompletableFuture;",
 			DH + "core/generation/queues/RemoteWorldRetrievalQueue#startAndSetTargetPos#(L" + DH + "core/pos/blockPos/DhBlockPos2D;)V",
 			DH + "core/generation/queues/RemoteWorldRetrievalQueue#getRequestRateLimit#()I",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#level#L" + DH + "core/level/DhClientLevel;",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#networkState#L" + DH + "core/multiplayer/client/ClientNetworkState;",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#<init>#(L" + DH + "core/multiplayer/client/ClientNetworkState;L" + DH + "core/level/DhClientLevel;ZL" + DH + "core/config/types/ConfigEntry;)V",
-		},
-		"NetworkRequestQueueMixin", new String[] {
+		}),
+		Map.entry("NetworkRequestQueueMixin", new String[] {
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#level#L" + DH + "core/level/DhClientLevel;",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#networkState#L" + DH + "core/multiplayer/client/ClientNetworkState;",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#getWaitingTaskCount#()I",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#getInProgressTaskCount#()I",
-		},
-		"SharedApiMixin", new String[] {
+		}),
+		Map.entry("SharedApiMixin", new String[] {
 			DH + "core/api/internal/SharedApi#applyChunkUpdate#(L" + DH + "core/wrapperInterfaces/chunk/IChunkWrapper;L" + DH + "core/wrapperInterfaces/world/ILevelWrapper;)V",
-		},
-		"ClientBlockStateColorCacheMixin", new String[] {
+		}),
+		Map.entry("ClientBlockStateColorCacheMixin", new String[] {
 			DH + "common/wrappers/block/ClientBlockStateColorCache#getColor#(L" + DH + "common/wrappers/block/BiomeWrapper;L" + DH + "core/dataObjects/fullData/sources/FullDataSourceV2;L" + DH + "core/pos/blockPos/DhBlockPos;)I",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#clientLevelWrapper#L" + DH + "core/wrapperInterfaces/world/IClientLevelWrapper;",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#blockState#Lnet/minecraft/world/level/block/state/BlockState;",
@@ -59,7 +64,17 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 			DH + "common/wrappers/block/ClientBlockStateColorCache#baseColor#I",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#needPostTinting#Z",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#tintIndex#I",
-		}
+		}),
+		Map.entry("XaeroMapWriterMixin", new String[] {
+			"xaero/map/MapWriter#writeChunk#*#net/minecraft/world/level/Level.getChunk" + MC_GET_CHUNK,
+		}),
+		Map.entry("XaeroMinimapWriterMixin", new String[] {
+			"xaero/common/minimap/write/MinimapWriter#writeTile#*#net/minecraft/client/multiplayer/ClientLevel.getChunk" + MC_GET_CHUNK,
+		}),
+		Map.entry("XaeroLodTileMixin", new String[] {
+			"xaero/map/MapWriter#writeChunk#*#xaero/map/region/MapTileChunk.getTile(II)Lxaero/map/region/MapTile;",
+			"xaero/map/region/MapTile#getWorldInterpretationVersion#()I",
+		})
 	);
 
 	/** Mixins left out because the installed Distant Horizons does not fit them, with the reason. Shown by the status commands. */
@@ -88,13 +103,16 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 			case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> config.clientGeneration;
 			case "SharedApiMixin" -> ModCompat.VERTIGO && config.vertigoGuard;
 			case "ClientBlockStateColorCacheMixin" -> config.bigGlobeColors;
+			case "XaeroMapWriterMixin" -> ModCompat.XAERO_WORLD_MAP && ModCompat.VERTIGO && config.vertigoGuard;
+			case "XaeroMinimapWriterMixin" -> ModCompat.XAERO_MINIMAP && ModCompat.VERTIGO && config.vertigoGuard;
+			case "XaeroLodTileMixin" -> ModCompat.XAERO_WORLD_MAP;
 			default -> true;
 		};
 		if (!wanted) return false;
 		String problem = this.problem(name);
 		if (problem != null) {
 			SKIPPED.put(name, problem);
-			Log.LOGGER.warn("SeedGenGlobe: leaving out {} for Distant Horizons {}: {}", name, ModCompat.version("distanthorizons"), problem);
+			Log.LOGGER.warn("SeedGenGlobe: leaving out {} ({}): {}", name, name.startsWith("Xaero") ? "Xaero's maps " + ModCompat.version(name.contains("Minimap") ? "xaerominimap" : "xaeroworldmap") : "Distant Horizons " + ModCompat.version("distanthorizons"), problem);
 			return false;
 		}
 		return true;
@@ -108,9 +126,12 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 				case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> "multiplayer client generation";
 				case "SharedApiMixin" -> "the Vertigo guard";
 				case "ClientBlockStateColorCacheMixin" -> "Big Globe colours for LODs";
+				case "XaeroMapWriterMixin", "XaeroMinimapWriterMixin" -> "keeping Vertigo's partly synced chunks off Xaero's map";
+				case "XaeroLodTileMixin" -> "Xaero mapping real chunks over LOD tiles right away";
 				default -> entry.getKey();
 			};
-			lines.add("Not available with this Distant Horizons build: " + feature + " (" + entry.getValue() + ")");
+			String mod = entry.getKey().startsWith("XaeroMinimap") ? "Xaero's Minimap" : entry.getKey().startsWith("Xaero") ? "Xaero's World Map" : "Distant Horizons";
+			lines.add("Not available with this " + mod + " build: " + feature + " (" + entry.getValue() + ")");
 		}
 		return lines;
 	}
@@ -119,12 +140,36 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 		String[] requirements = REQUIREMENTS.get(mixinName);
 		if (requirements == null) return null;
 		for (String requirement : requirements) {
-			String[] parts = requirement.split("#", 3);
+			String[] parts = requirement.split("#", 4);
 			ClassModel model = this.read(parts[0]);
 			if (model == null) return "class " + parts[0] + " not found";
-			if (!has(model, parts[1], parts[2])) return "missing " + parts[1] + " " + parts[2] + " in " + parts[0];
+			if (parts.length == 4) {
+				if (!calls(model, parts[1], parts[3])) return parts[0] + "." + parts[1] + " no longer calls " + parts[3];
+			}
+			else if (!has(model, parts[1], parts[2])) return "missing " + parts[1] + " " + parts[2] + " in " + parts[0];
 		}
 		return null;
+	}
+
+	/** Whether a method of this name contains a call "Owner.name(descriptor)". */
+	private static boolean calls(ClassModel model, String methodName, String call) {
+		int dot = call.indexOf('.'), paren = call.indexOf('(');
+		if (dot < 0 || paren < dot) return false;
+		String owner = call.substring(0, dot), name = call.substring(dot + 1, paren), descriptor = call.substring(paren);
+		for (MethodModel method : model.methods()) {
+			if (!method.methodName().equalsString(methodName)) continue;
+			java.util.Optional<java.lang.classfile.CodeModel> code = method.code();
+			if (code.isEmpty()) continue;
+			for (java.lang.classfile.CodeElement element : code.get()) {
+				if (element instanceof java.lang.classfile.instruction.InvokeInstruction invoke
+					&& invoke.owner().asInternalName().equals(owner)
+					&& invoke.name().equalsString(name)
+					&& invoke.type().equalsString(descriptor)) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	private static boolean has(ClassModel model, String name, String descriptor) {

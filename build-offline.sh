@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Builds SeedGenGlobe without Gradle or network access.
-# Compiles against the real Distant Horizons and Big Globe jars, the Fabric API modules bundled in Distant Horizons,
+# Compiles against the real Distant Horizons, Big Globe and Xaero's World Map / Minimap jars, the Fabric API modules
+# bundled in Distant Horizons (and xaerolib, bundled in Xaero's mods),
 # Mojang's brigadier (compiled from source) and generated compile-only stubs for Minecraft classes.
 set -euo pipefail
 
-VERSION="${VERSION:-1.0.0+mc26.1.2}"
+VERSION="${VERSION:-1.1.0+mc26.1.2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-/home/claude/work}"
 JAVAC="${JAVAC:-/usr/lib/jvm/java-25-openjdk-amd64/bin/javac}"
@@ -23,6 +24,7 @@ find "$HERE/stubs" "$HERE/src/vertigoStubs/java" -name '*.java' > "$BUILD/stub-s
 # 2. classpath: hand stubs, brigadier, real mod jars, Fabric API modules, generated Minecraft stubs (last)
 CP="$BUILD/stubs:$WORK/brigadier-classes"
 CP="$CP:$WORK/libs/DistantHorizons-3.0.3-b-26.1.2-atlasfix.jar:$WORK/libs/BigGlobe-6.3.0-MC26.1.2.jar"
+CP="$CP:$WORK/libs/xaeroworldmap-fabric-26.1.2-1.47.2.jar:$WORK/libs/xaerominimap-fabric-26.1.2-26.6.2.jar"
 for jar in "$WORK"/nested/*.jar; do CP="$CP:$jar"; done
 CP="$CP:$WORK/stubgen/out"
 

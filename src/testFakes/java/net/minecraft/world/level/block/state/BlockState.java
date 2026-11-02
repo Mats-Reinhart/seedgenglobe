@@ -10,6 +10,8 @@ public class BlockState {
 	public final boolean air, fluid;
 	public final int light, opacity;
 	public Block block;
+	/** For waterlogged blocks: the block of the fluid they hold. Fluid blocks hold themselves. */
+	public BlockState fluidBlock;
 
 	public BlockState(String name, boolean air, boolean fluid, int light, int opacity) {
 		this.name = name;
@@ -21,7 +23,7 @@ public class BlockState {
 
 	public boolean isAir() { return this.air; }
 	public int getLightEmission() { return this.light; }
-	public FluidState getFluidState() { return new FluidState(!this.fluid); }
+	public FluidState getFluidState() { return new FluidState(!this.fluid, this.fluidBlock != null ? this.fluidBlock : this); }
 	public Block getBlock() { return this.block; }
 	@Override public String toString() { return this.name; }
 }

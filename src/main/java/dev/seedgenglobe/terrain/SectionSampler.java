@@ -38,13 +38,14 @@ public final class SectionSampler {
 	private final ColumnProfile[] profiles = new ColumnProfile[WIDTH * WIDTH];
 	private final BlockState air = Blocks.AIR.defaultBlockState();
 	private final @Nullable CanopyModel canopy;
+	private final @Nullable GroundCover ground;
 	private final UndergroundMode underground;
 	private final boolean useBigGlobeUndergroundSetting;
 	private final boolean sampleCenter;
 
 	public int lastErrors;
 
-	public SectionSampler(GlobeTerrain terrain, @Nullable CanopyModel.Shared canopy) {
+	public SectionSampler(GlobeTerrain terrain, @Nullable CanopyModel.Shared canopy, @Nullable GroundCover.Shared ground) {
 		this.terrain = terrain;
 		GlobeConfig config = GlobeConfig.get();
 		ScriptedColumn.Params params = new ScriptedColumn.Params(0, 0, terrain.worldInfo, hints(0, UndergroundMode.FILL));
@@ -58,6 +59,7 @@ public final class SectionSampler {
 			this.profiles[index] = new ColumnProfile();
 		}
 		this.canopy = canopy != null ? new CanopyModel(canopy, this) : null;
+		this.ground = ground != null ? new GroundCover(ground, this) : null;
 		this.useBigGlobeUndergroundSetting = config.undergroundMode.equals("bigglobe");
 		this.underground = switch (config.undergroundMode) {
 			case "none" -> UndergroundMode.NONE;
@@ -102,6 +104,7 @@ public final class SectionSampler {
 		int genMinY = this.terrain.minY;
 		int genMaxY = this.terrain.maxY;
 		this.lastErrors = 0;
+		if (this.ground != null) this.ground.begin();
 		for (int relZ = 0; relZ < WIDTH; relZ += 2) {
 			for (int relX = 0; relX < WIDTH; relX += 2) {
 				int x = originX + (relX << detail) + half;
@@ -111,10 +114,10 @@ public final class SectionSampler {
 					QuadList lists = new QuadList();
 					lists.createNew(genMinY, genMaxY);
 					QuadHolder.generate(this.quad, lists, this.terrain.layer);
-					this.finishColumn(this.quad.object00, lists, 0, relX,     relZ,     levelMinY, levelMaxY, topSkyLight);
-					this.finishColumn(this.quad.object01, lists, 1, relX + 1, relZ,     levelMinY, levelMaxY, topSkyLight);
-					this.finishColumn(this.quad.object10, lists, 2, relX,     relZ + 1, levelMinY, levelMaxY, topSkyLight);
-					this.finishColumn(this.quad.object11, lists, 3, relX + 1, relZ + 1, levelMinY, levelMaxY, topSkyLight);
+					this.finishColumn(this.quad.object00, lists, 0, relX,     relZ,     levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
+					this.finishColumn(this.quad.object01, lists, 1, relX + 1, relZ,     levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
+					this.finishColumn(this.quad.object10, lists, 2, relX,     relZ + 1, levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
+					this.finishColumn(this.quad.object11, lists, 3, relX + 1, relZ + 1, levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
 				}
 				catch (Throwable throwable) {
 					if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
@@ -132,6 +135,18 @@ public final class SectionSampler {
 		if (this.canopy != null) {
 			try {
 				this.canopy.apply(originX, originZ, detail, levelMinY);
+			}
+			catch (Throwable throwable) {
+				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
+					throw error;
+				}
+				this.lastErrors++;
+				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
+			}
+		}
+		if (this.ground != null) {
+			try {
+				this.ground.apply();
 			}
 			catch (Throwable throwable) {
 				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
@@ -159,7 +174,7 @@ public final class SectionSampler {
 		return profile;
 	}
 
-	private void finishColumn(ScriptedColumn column, QuadList lists, int which, int relX, int relZ, int levelMinY, int levelMaxY, byte topSkyLight) {
+	private void finishColumn(ScriptedColumn column, QuadList lists, int which, int relX, int relZ, int levelMinY, int levelMaxY, byte topSkyLight, int originX, int originZ, int detail) {
 		ColumnProfile profile = this.profile(relX, relZ);
 		profile.build(
 			column,
@@ -177,6 +192,17 @@ public final class SectionSampler {
 		profile.biome = this.biomeAt(column, profile);
 		if (this.canopy != null) {
 			this.canopy.observe(column, profile, relX, relZ);
+		}
+		if (this.ground != null) {
+			try {
+				this.ground.observe(column, profile, relX, relZ, originX + (relX << detail), originZ + (relZ << detail), detail);
+			}
+			catch (RuntimeException | StackOverflowError exception) {
+				// a decorator script failed for this column: it simply gets no ground cover
+				this.ground.forget(relX, relZ);
+				this.lastErrors++;
+				SeedGenGlobe.logColumnError(this.terrain, column.x(), column.z(), exception);
+			}
 		}
 	}
 

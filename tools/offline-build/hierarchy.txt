@@ -44,3 +44,4 @@ method net/fabricmc/api/ModInitializer onInitialize ()V
 method net/fabricmc/api/ClientModInitializer onInitializeClient ()V
 interface net/fabricmc/api/ModInitializer
 interface net/fabricmc/api/ClientModInitializer
+class net/minecraft/world/level/material/FluidState extends net/minecraft/world/level/block/state/StateHolder

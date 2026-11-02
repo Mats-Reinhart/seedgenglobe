@@ -18,6 +18,7 @@ import com.seibel.distanthorizons.api.objects.data.IDhApiFullDataSource;
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.terrain.CanopyModel;
 import dev.seedgenglobe.terrain.GlobeTerrain;
+import dev.seedgenglobe.terrain.GroundCover;
 import dev.seedgenglobe.terrain.SectionSampler;
 
 /**
@@ -35,6 +36,7 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 	public final GenStats stats;
 	private final DhWriter.Wrappers wrappers;
 	private final @Nullable CanopyModel.Shared canopy;
+	private final @Nullable GroundCover.Shared ground;
 	private final ConcurrentLinkedQueue<Worker> idle = new ConcurrentLinkedQueue<>();
 	private final int levelMinY, levelMaxY;
 	private final byte topSkyLight;
@@ -43,17 +45,21 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 	private volatile boolean closed;
 
 	private final class Worker {
-		final SectionSampler sampler = new SectionSampler(GlobeWorldGenerator.this.terrain, GlobeWorldGenerator.this.canopy);
+		final SectionSampler sampler = new SectionSampler(GlobeWorldGenerator.this.terrain, GlobeWorldGenerator.this.canopy, GlobeWorldGenerator.this.ground);
 		final DhWriter writer = new DhWriter(GlobeWorldGenerator.this.wrappers);
 	}
 
-	public GlobeWorldGenerator(IDhApiLevelWrapper level, GlobeTerrain terrain, boolean hasSkyLight, boolean hasCeiling, String statsName) {
+	/**
+	 * @param ground ground cover for this terrain, or null for none (see {@link GroundCover.Shared#create})
+	 */
+	public GlobeWorldGenerator(IDhApiLevelWrapper level, GlobeTerrain terrain, boolean hasSkyLight, boolean hasCeiling, String statsName, @Nullable GroundCover.Shared ground) {
 		this.level = level;
 		this.terrain = terrain;
 		GlobeConfig config = GlobeConfig.get();
 		this.stats = new GenStats(statsName);
 		this.wrappers = new DhWriter.Wrappers(level, terrain.fallbackBiome);
 		this.canopy = config.trees ? CanopyModel.Shared.create(terrain, hasSkyLight, hasCeiling) : null;
+		this.ground = config.groundCover ? ground : null;
 		// DH's level wrappers return the level's height from getMaxHeight(), not its top Y.
 		int minY = level.getMinHeight();
 		int height = level.getMaxHeight();
@@ -112,6 +118,7 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 	) {
 		// The generator mode is ignored on purpose: LODs computed here are never saved as chunks,
 		// so "pre-existing chunks only" has nothing to protect, and skipping would leave holes DH keeps re-requesting.
+		SectionFlags.keepToItself(pooledFullDataSource);
 		return this.generateAsync(chunkPosMinX << 4, chunkPosMinZ << 4, detailLevel, pooledFullDataSource, worldGeneratorThreadPool, resultConsumer);
 	}
 
@@ -169,7 +176,15 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 
 	/** A private sampler for diagnostics; never shared with the generation workers. */
 	public SectionSampler newSampler() {
-		return new SectionSampler(this.terrain, this.canopy);
+		return new SectionSampler(this.terrain, this.canopy, this.ground);
+	}
+
+	public @Nullable CanopyModel.Shared canopy() {
+		return this.canopy;
+	}
+
+	public @Nullable GroundCover.Shared groundCover() {
+		return this.ground;
 	}
 
 	public byte topSkyLight() {

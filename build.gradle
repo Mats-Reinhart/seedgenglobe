@@ -10,10 +10,10 @@ base {
 	archivesName = project.archives_base_name
 }
 
-// Distant Horizons, Big Globe and Vertigo are compiled against local jars in libs/ (see libs/README.txt).
-// Players install those mods themselves; nothing from them ends up in SeedGenGlobe's jar.
+// Distant Horizons, Big Globe, Xaero's World Map and Minimap and Vertigo are compiled against local jars in libs/
+// (see libs/README.txt). Players install those mods themselves; nothing from them ends up in SeedGenGlobe's jar.
 def localMods = fileTree('libs') { include '*.jar' }
-// Big Globe keeps a library that its public classes refer to (autocodec) inside its own jar.
+// Big Globe keeps a library that its public classes refer to (autocodec) inside its own jar, and Xaero's mods keep theirs (xaerolib).
 def nestedLibraries = files(provider {
 	localMods.files.collectMany { jar ->
 		zipTree(jar).matching {
@@ -28,7 +28,7 @@ sourceSets {
 		// compile-time copy of Vertigo's small public API, so Vertigo itself is optional for building (excluded from the jar)
 		java.srcDir 'src/vertigoStubs/java'
 	}
-	// ColumnProfile's logic tests run without Minecraft, against small fakes of the classes it uses
+	// ColumnProfile's and XaeroPixel's logic tests run without Minecraft, against small fakes of the classes they use
 	columnTest {
 		java.srcDir 'src/testFakes/java'
 		java.srcDir layout.buildDirectory.dir('generated/columnTest')
@@ -36,7 +36,11 @@ sourceSets {
 }
 
 def copyColumnProfile = tasks.register('copyColumnProfileForTest', Copy) {
-	from('src/main/java') { include 'dev/seedgenglobe/terrain/ColumnProfile.java' }
+	from('src/main/java') {
+		include 'dev/seedgenglobe/terrain/ColumnProfile.java'
+		include 'dev/seedgenglobe/xaero/MapPixel.java'
+		include 'dev/seedgenglobe/xaero/XaeroPixel.java'
+	}
 	into layout.buildDirectory.dir('generated/columnTest')
 }
 tasks.named('compileColumnTestJava') { dependsOn copyColumnProfile }
@@ -93,6 +97,13 @@ def columnProfileTest = tasks.register('columnProfileTest', JavaExec) {
 	mainClass = 'dev.seedgenglobe.terrain.ColumnProfileTest'
 }
 
+def xaeroPixelTest = tasks.register('xaeroPixelTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks that a column reads on the LOD map the way Xaero\'s World Map reads a chunk column.'
+	classpath = sourceSets.columnTest.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.xaero.XaeroPixelTest'
+}
+
 def canopyMathTest = tasks.register('canopyMathTest', JavaExec) {
 	group = 'verification'
 	description = 'Sanity checks for the tree canopy shape functions.'
@@ -100,6 +111,20 @@ def canopyMathTest = tasks.register('canopyMathTest', JavaExec) {
 	mainClass = 'dev.seedgenglobe.terrain.CanopyMathTest'
 }
 
+def groundCoverTest = tasks.register('groundCoverTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the ground cover decorators against Big Globe\'s chances and Distant Horizons\' 2 x 2 merge.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.terrain.GroundCoverTest'
+}
+
+def lodMapGeometryTest = tasks.register('lodMapGeometryTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the region rings, keys, distances, detail levels and tile rules of the Xaero LOD map.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.xaero.LodMapGeometryTest'
+}
+
 tasks.named('check') {
-	dependsOn columnProfileTest, canopyMathTest
+	dependsOn columnProfileTest, xaeroPixelTest, canopyMathTest, groundCoverTest, lodMapGeometryTest
 }

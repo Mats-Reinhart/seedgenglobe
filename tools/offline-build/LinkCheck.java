@@ -234,6 +234,7 @@ public class LinkCheck {
                     else { ok++; reported.add("OK      mixin " + self + " @Shadow " + f.fieldName() + " " + f.fieldType()); }
                 }
             }
+            checkWrapOperations(cm, self, target, t);
             // @Inject handlers
             for (MethodModel m : cm.methods()) {
                 Optional<RuntimeVisibleAnnotationsAttribute> vis = m.findAttribute(Attributes.runtimeVisibleAnnotations());
@@ -262,6 +263,82 @@ public class LinkCheck {
                             for (int i = 0; good && i < td.parameterCount(); i++) good = hd.parameterType(i).equals(td.parameterType(i));
                             if (!good) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + hd.descriptorString() + " does not fit " + target + "." + tm.methodName() + td.descriptorString()); }
                             else { ok++; reported.add("OK      mixin " + self + "." + m.methodName() + " -> " + target + "." + tm.methodName() + td.descriptorString()); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * MixinExtras @WrapOperation handlers: each selected target method must exist and contain the wrapped call
+     * (@At INVOKE target), and the handler must take the call's receiver (unless static) and arguments plus an
+     * Operation, and return what the call returns.
+     */
+    static void checkWrapOperations(ClassModel cm, String self, String target, ClassModel t) {
+        for (MethodModel m : cm.methods()) {
+            Optional<RuntimeVisibleAnnotationsAttribute> vis = m.findAttribute(Attributes.runtimeVisibleAnnotations());
+            if (vis.isEmpty()) continue;
+            for (Annotation a : vis.get().annotations()) {
+                if (!a.className().equalsString("Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;")) continue;
+                List<String> selectors = new ArrayList<>();
+                List<String> calls = new ArrayList<>();
+                List<Integer> ordinals = new ArrayList<>();
+                for (AnnotationElement el : a.elements()) {
+                    if (el.name().equalsString("method") && el.value() instanceof AnnotationValue.OfArray arr) {
+                        for (AnnotationValue v : arr.values()) if (v instanceof AnnotationValue.OfString str) selectors.add(str.stringValue());
+                    }
+                    if (el.name().equalsString("at") && el.value() instanceof AnnotationValue.OfArray arr) {
+                        for (AnnotationValue v : arr.values()) {
+                            if (!(v instanceof AnnotationValue.OfAnnotation at)) continue;
+                            String kind = null, call = null;
+                            int ordinal = -1;
+                            for (AnnotationElement ae : at.annotation().elements()) {
+                                if (ae.name().equalsString("value") && ae.value() instanceof AnnotationValue.OfString str) kind = str.stringValue();
+                                if (ae.name().equalsString("target") && ae.value() instanceof AnnotationValue.OfString str) call = str.stringValue();
+                                if (ae.name().equalsString("ordinal") && ae.value() instanceof AnnotationValue.OfInt i) ordinal = i.intValue();
+                            }
+                            if ("INVOKE".equals(kind) && call != null) {
+                                calls.add(call);
+                                ordinals.add(ordinal);
+                            }
+                            else { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + " @WrapOperation needs @At(value = \"INVOKE\", target = ...)"); }
+                        }
+                    }
+                }
+                for (int c = 0; c < calls.size(); c++) {
+                    String call = calls.get(c);
+                    int ordinal = ordinals.get(c);
+                    // "Lowner;name(args)ret"
+                    int semi = call.indexOf(';'), paren = call.indexOf('(');
+                    if (!call.startsWith("L") || semi < 0 || paren < semi) { errors++; reported.add("ERROR   mixin " + self + " bad @At target " + call); continue; }
+                    String owner = call.substring(1, semi), name = call.substring(semi + 1, paren), desc = call.substring(paren);
+                    for (String selector : selectors) {
+                        String selName = selector.contains("(") ? selector.substring(0, selector.indexOf('(')) : selector;
+                        String selDesc = selector.contains("(") ? selector.substring(selector.indexOf('(')) : null;
+                        List<MethodModel> matches = t.methods().stream().filter(x -> x.methodName().equalsString(selName) && (selDesc == null || x.methodType().equalsString(selDesc))).toList();
+                        if (matches.isEmpty()) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + " wraps a call in missing " + target + "." + selector); continue; }
+                        for (MethodModel tm : matches) {
+                            int seen = 0;
+                            boolean isStatic = false, found = false;
+                            if (tm.code().isPresent()) {
+                                for (CodeElement e : tm.code().get()) {
+                                    if (e instanceof InvokeInstruction inv && inv.owner().asInternalName().equals(owner) && inv.name().equalsString(name) && inv.type().equalsString(desc)) {
+                                        if (ordinal < 0 || seen == ordinal) { found = true; isStatic = inv.opcode() == Opcode.INVOKESTATIC; }
+                                        seen++;
+                                    }
+                                }
+                            }
+                            if (!found) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + ": " + target + "." + tm.methodName() + " has no call " + call + (ordinal >= 0 ? " #" + ordinal : "") + " (" + seen + " found)"); continue; }
+                            MethodTypeDesc cd = MethodTypeDesc.ofDescriptor(desc);
+                            List<ClassDesc> expected = new ArrayList<>();
+                            if (!isStatic) expected.add(ClassDesc.ofInternalName(owner));
+                            expected.addAll(cd.parameterList());
+                            expected.add(ClassDesc.of("com.llamalad7.mixinextras.injector.wrapoperation.Operation"));
+                            MethodTypeDesc hd = m.methodTypeSymbol();
+                            boolean good = hd.returnType().equals(cd.returnType()) && hd.parameterList().equals(expected);
+                            if (!good) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + hd.descriptorString() + " does not fit the wrapped call " + call); }
+                            else { ok++; reported.add("OK      mixin " + self + "." + m.methodName() + " wraps " + owner + "." + name + desc + (ordinal >= 0 ? " #" + ordinal : "") + " in " + target + "." + tm.methodName()); }
                         }
                     }
                 }

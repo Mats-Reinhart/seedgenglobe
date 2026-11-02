@@ -23,11 +23,16 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
+
 import builderb0y.bigglobe.chunkgen.BigGlobeScriptedChunkGenerator;
+import builderb0y.bigglobe.features.FlowerControllerFeature;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.terrain.GlobeTerrain;
+import dev.seedgenglobe.terrain.GroundCover;
 
 /**
  * Hooks SeedGenGlobe into Distant Horizons through its public event and override API.
@@ -101,7 +106,10 @@ public final class DhBridge {
 			SeedGenGlobe.LOGGER.warn("SeedGenGlobe: Big Globe has not compiled {} yet, leaving it to Distant Horizons' default generator.", dimension);
 			return;
 		}
-		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension);
+		GroundCover.Shared ground = GlobeConfig.get().groundCover && isOverworldLike(generator)
+			? GroundCover.Shared.create(terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), level.getSeed(), overworldFlowers(level))
+			: null;
+		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground);
 		if (register(wrapper, globe)) {
 			SERVER_GENERATORS.put(wrapper, globe);
 			SeedGenGlobe.LOGGER.info(
@@ -121,6 +129,35 @@ public final class DhBridge {
 	}
 
 	private static volatile boolean nSizedAdviceLogged;
+
+	/** Ground cover follows Big Globe's overworld decorators, so it is only used where those run. */
+	static boolean isOverworldLike(BigGlobeScriptedChunkGenerator generator) {
+		try {
+			return generator.feature_dispatcher != null
+				&& generator.feature_dispatcher.normal != null
+				&& ((java.util.Optional<?>)(generator.feature_dispatcher.normal.unwrapKey()))
+					.map(key -> key instanceof net.minecraft.resources.ResourceKey<?> resourceKey ? resourceKey.identifier().toString() : "")
+					.orElse("")
+					.startsWith("bigglobe:overworld/");
+		}
+		catch (RuntimeException | LinkageError error) {
+			return false;
+		}
+	}
+
+	/** Big Globe's overworld flower controller, which decides where flower patches grow. */
+	static @Nullable FlowerControllerFeature.Config overworldFlowers(ServerLevel level) {
+		try {
+			Object feature = level.registryAccess()
+				.lookupOrThrow(Registries.CONFIGURED_FEATURE)
+				.getValue(Identifier.parse("bigglobe:overworld/surface_flowers"));
+			if (feature instanceof ConfiguredFeature<?, ?> configured && configured.config() instanceof FlowerControllerFeature.Config config) return config;
+		}
+		catch (RuntimeException | LinkageError error) {
+			SeedGenGlobe.LOGGER.debug("SeedGenGlobe: no Big Globe flower controller", error);
+		}
+		return null;
+	}
 
 	/**
 	 * Players connected to a Distant Horizons server only ask it for full-detail sections unless DH's experimental
