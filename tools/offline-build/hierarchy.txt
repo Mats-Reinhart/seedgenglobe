@@ -46,3 +46,14 @@ method net/fabricmc/api/ClientModInitializer onInitializeClient ()V
 interface net/fabricmc/api/ModInitializer
 interface net/fabricmc/api/ClientModInitializer
 class net/minecraft/world/level/material/FluidState extends net/minecraft/world/level/block/state/StateHolder
+# 1.3.0: the config and status screens and the progress overlay (Minecraft 26.1 GUI)
+class net/minecraft/client/gui/components/Button extends net/minecraft/client/gui/components/AbstractButton
+class net/minecraft/client/gui/components/AbstractButton extends net/minecraft/client/gui/components/AbstractWidget
+class net/minecraft/client/gui/components/AbstractWidget implements net/minecraft/client/gui/components/Renderable,net/minecraft/client/gui/components/events/GuiEventListener
+interface net/minecraft/client/gui/components/Renderable
+interface net/minecraft/client/gui/components/events/GuiEventListener
+class net/minecraft/client/gui/screens/Screen extends net/minecraft/client/gui/components/events/AbstractContainerEventHandler implements net/minecraft/client/gui/components/Renderable
+class net/minecraft/client/gui/components/events/AbstractContainerEventHandler implements net/minecraft/client/gui/components/events/ContainerEventHandler
+interface net/minecraft/client/gui/components/events/ContainerEventHandler extends net/minecraft/client/gui/components/events/GuiEventListener
+interface net/minecraft/client/gui/components/Button$OnPress functional
+method net/minecraft/client/gui/components/Button$OnPress onPress (Lnet/minecraft/client/gui/components/Button;)V

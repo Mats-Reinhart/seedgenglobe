@@ -3,13 +3,16 @@
 The released jar was built where Mojang's and Fabric's servers could not be reached, so there was no Minecraft
 jar and no Gradle/Loom. These tools made that possible and checked the result. Use Gradle for normal development.
 
-1. `SurfaceScan <outDir> <jar...>` reads the Distant Horizons, Big Globe, SeedGen and Xaero's World Map and
-   Minimap jars (and the jars nested in them) and records every class and member they define, and every member of
+1. `SurfaceScan <outDir> <jar...>` reads the Distant Horizons, Big Globe, Xaero's World Map and Minimap and Mod Menu
+   jars (`$WORK/libs`) and other mods built for the same Minecraft version, read only for their references
+   (`$WORK/refs`: for 1.3.0 SeedGen, Sodium, Sodium Extra, Lithium, C2ME, Noisium, ScalableLux, ImmediatelyFast and
+   Cloth Config), with the jars nested in them, and records every class and member they define, and every member of
    other classes they reference. Those mods were compiled against the real Minecraft 26.1.2, so their references
    describe Minecraft's API.
 2. `StubGen <outDir> hierarchy.txt <prefixes> <jar...>` turns the referenced Minecraft and library members into
    compile-only stub classes. `hierarchy.txt` adds the class hierarchy, generic arities and the few members that
-   only SeedGenGlobe uses. `make-stubs.sh` compiles the three tools and regenerates the stubs into
+   only SeedGenGlobe uses; an interface marked `functional` gets abstract methods so that lambdas compile
+   (`Button.OnPress`), every other stub interface method is a default method. `make-stubs.sh` compiles the three tools and regenerates the stubs into
    `$WORK/stubgen/out` with the prefixes the release used (after a change to `hierarchy.txt`, for example).
    Stub methods have erased signatures and constants are not stubbed (javac inlines them), so SeedGenGlobe casts
    what generic Minecraft methods return and spells out a few flag values.
@@ -22,8 +25,9 @@ jar and no Gradle/Loom. These tools made that possible and checked the result. U
    same way (same owner, descriptor and invoke kind) by those mods' bytecode; that every mixin `@Shadow` and
    `@Inject` target exists in the target jar; and that every MixinExtras `@WrapOperation` target method exists and
    contains the wrapped call (at the given ordinal), with a handler that takes the call's receiver, arguments and an
-   `Operation` and returns what the call returns. Members nothing else references are listed as unverified for a
-   manual look (for 1.1.0: four Vertigo API members, checked against Vertigo's source, `LevelChunk.getMaxY()`, which
+   `Operation` and returns what the call returns. Mixins into Minecraft classes (which are not available) are
+   checked against the methods other mods call: an `@Inject` target nothing else calls is listed as unverified.
+   Members nothing else references are listed as unverified for a manual look (for 1.1.0: four Vertigo API members, checked against Vertigo's source, `LevelChunk.getMaxY()`, which
    Minecraft declares on `LevelHeightAccessor`, and the standard Fabric and Mixin entrypoint interfaces).
 
 Paths in the scripts default to the layout of that build machine (`WORK=/home/claude/work`); set `WORK`, `JAVAC`
@@ -31,4 +35,10 @@ and `JAR` to use them elsewhere.
 
 For 1.1.0 the result was: 983 references resolved, 8 unverified (above), 0 errors. For 1.2.0, which also reads a
 few of Distant Horizons' internal thread pool and config classes for its diagnostics (all of them resolved against
-the real Distant Horizons jar): 1396 resolved, the same 8 unverified, 0 errors.
+the real Distant Horizons jar): 1396 resolved, the same 8 unverified, 0 errors. For 1.3.0, against Distant Horizons
+3.0.3-b with the atlasfix patch and the reference mods above: 1600 resolved, 14 unverified, 0 errors. The unverified
+ones are `LevelChunk.getMaxY()` and the three entrypoint interfaces from above, and ten `StructureManager` methods
+the structure guard injects into that no other mod calls (all `require = 0`, so a method missing in 26.1.2 only
+leaves that one injection out; the one a swamp hut's cat uses, `getStructureWithPieceAt(BlockPos, TagKey)`, is
+verified). `GlobeMixinPlugin`'s requirement checks also pass for every Distant Horizons and Xaero mixin against
+those jars.

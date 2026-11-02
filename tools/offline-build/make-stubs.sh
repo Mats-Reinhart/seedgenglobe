@@ -13,8 +13,11 @@ OUT="$WORK/stubgen/out"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp "$HERE/hierarchy.txt" "$WORK/stubgen/hierarchy.txt"
+# the mods compiled against (libs) and other mods for the same Minecraft version, read only for their references (refs)
+JARS=("$WORK"/libs/*.jar)
+if compgen -G "$WORK/refs/*.jar" > /dev/null; then JARS+=("$WORK"/refs/*.jar); fi
 "$JAVA" -cp "$WORK/tools/classes" StubGen "$OUT" "$HERE/hierarchy.txt" \
 	"net/minecraft/,com/mojang/,com/google/,io/netty/,it/unimi/,org/apache/,org/joml/,org/lwjgl/,net/fabricmc/,xaero/pac/" \
-	"$WORK"/libs/*.jar
+	"${JARS[@]}"
 rm -rf "$OUT/com/mojang/brigadier"
 echo "stubs in $OUT"
