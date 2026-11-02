@@ -1,0 +1,27 @@
+{
+	"required": false,
+	"minVersion": "0.8",
+	"package": "dev.seedgenglobe.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"plugin": "dev.seedgenglobe.GlobeMixinPlugin",
+	"mixins": [
+		"SharedApiMixin",
+		"StructureManagerCaptureMixin",
+		"WorldGenerationQueueMixin",
+		"GeneratedFullDataSourceProviderMixin"
+	],
+	"client": [
+		"DhClientLevelMixin",
+		"RemoteWorldRetrievalQueueMixin",
+		"NetworkRequestQueueMixin",
+		"ClientBlockStateColorCacheMixin",
+		"XaeroMapWriterMixin",
+		"XaeroMinimapWriterMixin",
+		"XaeroLodTileMixin",
+		"XaeroMinimapLodMixin",
+		"LodQuadTreeMixin"
+	],
+	"injectors": {
+		"defaultRequire": 0
+	}
+}
