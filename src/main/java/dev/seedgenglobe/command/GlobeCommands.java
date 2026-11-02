@@ -26,11 +26,17 @@ import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.GlobeMixinPlugin;
 import dev.seedgenglobe.ModCompat;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.regen.LodRegeneration;
 import dev.seedgenglobe.terrain.ColumnProfile;
 
 /**
- * {@code /seedgenglobe debug ...}: tools for finding out what SeedGenGlobe does, for operators. Everything a player
- * needs day to day (settings, progress, status) is in the config screen (Mod Menu) and the progress overlay.
+ * {@code /seedgenglobe ...}, for operators. Everything a player needs day to day (settings, progress, status) is in the
+ * config screen (Mod Menu) and the progress overlay.
+ * <p>
+ * {@code regenerate [cancel]}: deletes this world's LODs so they are generated again (see {@link LodRegeneration});
+ * the first send says what goes, the second within 30 seconds confirms.
+ * <p>
+ * {@code debug ...}: tools for finding out what SeedGenGlobe does.
  * <ul>
  * <li>{@code status}: what every generator, the scheduler and Distant Horizons' queues are doing;</li>
  * <li>{@code verify [radiusChunks]}: predicted surface heights against the real chunks around you;</li>
@@ -77,6 +83,11 @@ public final class GlobeCommands {
 			)
 		);
 		LiteralArgumentBuilder<CommandSourceStack> root = LiteralArgumentBuilder.<CommandSourceStack>literal("seedgenglobe").requires(GlobeCommands::isGamemaster);
+		root.then(
+			LiteralArgumentBuilder.<CommandSourceStack>literal("regenerate")
+			.executes(GlobeCommands::regenerate)
+			.then(LiteralArgumentBuilder.<CommandSourceStack>literal("cancel").executes(GlobeCommands::regenerateCancel))
+		);
 		root.then(debug);
 		dispatcher.register(root);
 	}
@@ -91,6 +102,23 @@ public final class GlobeCommands {
 
 	static void fail(CommandSourceStack source, String message) {
 		source.sendFailure(Component.literal(message));
+	}
+
+	/** {@code /seedgenglobe regenerate}: asks the first time, schedules the second time (within 30 seconds). */
+	static int regenerate(CommandContext<CommandSourceStack> context) {
+		CommandSourceStack source = context.getSource();
+		return reply(source, LodRegeneration.command(source.getServer(), source.getTextName()));
+	}
+
+	static int regenerateCancel(CommandContext<CommandSourceStack> context) {
+		CommandSourceStack source = context.getSource();
+		return reply(source, LodRegeneration.cancel(source.getServer(), source.getTextName()));
+	}
+
+	private static int reply(CommandSourceStack source, LodRegeneration.Reply reply) {
+		if (reply.ok()) say(source, reply.message());
+		else fail(source, reply.message());
+		return reply.ok() ? 1 : 0;
 	}
 
 	static int status(CommandContext<CommandSourceStack> context) {

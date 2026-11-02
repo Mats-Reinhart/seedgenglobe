@@ -47,4 +47,8 @@ Since 1.3.1 the link check also follows members a class inherits (javac writes `
 Minecraft widget as a reference to the subclass) up to the first class outside the jar that defines the subclass, in
 SeedGenGlobe and in the scanned mods alike, so a member SeedGenGlobe's settings list or sliders inherit from Minecraft
 is verified when another mod's subclass uses it the same way. For 1.3.1, with the Vertigo jar passed as well: 1709 resolved
-(59 of them inherited through SeedGenGlobe's own subclasses), the same 14 unverified as 1.3.0, 0 errors. `tools/SettingsTable.java` prints the README's settings tables from the option list.
+(59 of them inherited through SeedGenGlobe's own subclasses), the same 14 unverified as 1.3.0, 0 errors. For 1.3.2,
+which also reads Distant Horizons' internal server world, level and repository classes to find its LOD databases and
+whether their connections are closed (all resolved against the real Distant Horizons jar): 1813 resolved (60
+inherited), the same 14 unverified, 0 errors. `hierarchy.txt` gained `ConfirmScreen`, fastutil's `BooleanConsumer`
+(functional) and `IntegratedServer` for it. `tools/SettingsTable.java` prints the README's settings tables from the option list.

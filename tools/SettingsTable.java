@@ -34,7 +34,7 @@ public class SettingsTable {
 				meaning.append(')');
 			}
 			if (!option.apply.note.isEmpty()) meaning.append(" *").append(option.apply.note).append('*');
-			out.append("| `").append(option.key).append("` | ").append(option.key.equals("generatorPriority") ? "(file only)" : option.label).append(" | `").append(value(option, defaults)).append("` | ").append(meaning).append(" |\n");
+			out.append("| `").append(option.key).append("` | ").append(option.key.equals("generatorPriority") ? "(file only)" : option.key.equals("enabled") ? "Enabled / Disabled (after the page buttons)" : option.label).append(" | `").append(value(option, defaults)).append("` | ").append(meaning).append(" |\n");
 		}
 		System.out.print(out);
 	}

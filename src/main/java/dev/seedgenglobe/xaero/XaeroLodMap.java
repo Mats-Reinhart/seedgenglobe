@@ -11,14 +11,13 @@ import org.jetbrains.annotations.Nullable;
 
 import com.seibel.distanthorizons.api.DhApi;
 
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 
 import xaero.map.MapProcessor;
 
 import dev.seedgenglobe.GlobeConfig;
-import dev.seedgenglobe.ModCompat;
+import dev.seedgenglobe.LodMapFolders;
 import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.client.ClientGeneration;
 import dev.seedgenglobe.dh.DhBridge;
@@ -30,12 +29,6 @@ import dev.seedgenglobe.terrain.CanopyModel;
  * Loaded only when Xaero's World Map is installed.
  */
 public final class XaeroLodMap {
-
-	/**
-	 * Version of what the LOD map stores per column; part of its folder name, so a SeedGenGlobe update that changes
-	 * how columns are read starts a fresh map instead of mixing old and new regions.
-	 */
-	static final int MAP_VERSION = 4;
 
 	private static @Nullable LodMapBuilder builder;
 	private static @Nullable XaeroLodWriter writer;
@@ -111,6 +104,31 @@ public final class XaeroLodMap {
 	}
 
 	/** The map builder (for the progress overlay), or null when Xaero's World Map is not installed. */
+	/**
+	 * LOD regeneration ({@link dev.seedgenglobe.regen.LodRegeneration}): forgets the stores kept for these folders, so
+	 * the map starts empty there when the world is opened again, and runs {@code delete} on the builder thread, after
+	 * whatever it still had to write there (the index saved when the world was left). Any thread.
+	 */
+	public static void discard(List<Path> folders, Runnable delete) {
+		List<Path> normal = new ArrayList<>();
+		for (Path folder : folders) normal.add(folder.toAbsolutePath().normalize());
+		STORES.keySet().removeIf(directory -> normal.contains(directory.toAbsolutePath().normalize()));
+		LodMapBuilder builder = XaeroLodMap.builder;
+		if (builder == null) {
+			delete.run();
+			return;
+		}
+		builder.runLater(() -> {
+			LodMapBuilder.Target target = builder.target();
+			if (target != null && normal.contains(target.store().directory.toAbsolutePath().normalize())) {
+				// the world was opened again before this ran: leave the map in use alone
+				SeedGenGlobe.LOGGER.warn("SeedGenGlobe: LOD regeneration: the Xaero LOD map in {} is in use again, it was not cleared.", target.store().directory);
+				return;
+			}
+			delete.run();
+		});
+	}
+
 	public static @Nullable LodMapBuilder builder() {
 		return builder;
 	}
@@ -191,19 +209,15 @@ public final class XaeroLodMap {
 	/**
 	 * One store per terrain: the folder name hashes Big Globe's column seed (the same on servers and on clients,
 	 * which never learn the world seed) together with the Big Globe version, since a different version may shape
-	 * terrain differently, and {@link #MAP_VERSION}. Whether Xaero draws flowers changes which block a column shows,
-	 * so both settings get a folder of their own, and so do maps with and without structures (multiplayer clients
-	 * cannot place them) and with structures up to another detail level.
+	 * terrain differently, and the map's version (see {@link LodMapFolders#terrain}). Whether Xaero draws flowers
+	 * changes which block a column shows, so both settings get a folder of their own, and so do maps with and without
+	 * structures (multiplayer clients cannot place them) and with structures up to another detail level.
 	 */
 	static @Nullable LodMapStore store(GlobeWorldGenerator generator, ClientLevel level, boolean flowers) {
-		long seed = generator.terrain.worldInfo.seed();
-		String version = ModCompat.version("bigglobe") + "/" + MAP_VERSION;
-		long hash = seed * 0x9E3779B97F4A7C15L ^ version.hashCode() * 0xC2B2AE3D27D4EB4FL;
-		hash ^= hash >>> 29;
-		String dimension = level.dimension().identifier().toString().replace(':', '_').replace('/', '_')
+		String dimension = LodMapFolders.dimension(level.dimension().identifier().toString())
 			+ (flowers ? "" : "-noflowers")
 			+ (generator.structures() != null ? "-s" + generator.structures().fullDetail() : "-nostructures");
-		Path directory = FabricLoader.getInstance().getGameDir().resolve("seedgenglobe").resolve("lodmap").resolve(Long.toHexString(hash)).resolve(dimension);
+		Path directory = LodMapFolders.root().resolve(LodMapFolders.terrain(generator.terrain.worldInfo.seed())).resolve(dimension);
 		LodMapStore existing = STORES.get(directory);
 		if (existing != null) return existing;
 		try {

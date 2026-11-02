@@ -188,13 +188,34 @@ it every minute.
 4. `/seedgenglobe debug benchmark` times generation on one thread at detail 0, 3 and 6, for example
    `/seedgenglobe debug benchmark 32 6`.
 
+## Regenerating LODs
+
+To throw away a world's LODs and have them generated again (after changing settings that shape the terrain, or a
+SeedGenGlobe update), use **Regenerate LODs...** on the General page of SeedGenGlobe's settings (singleplayer, with
+the world open), or send `/seedgenglobe regenerate` (operators; it says what will be deleted, and sending it again
+within 30 seconds confirms).
+
+This deletes Distant Horizons' LOD database of every dimension of the world (`DistantHorizons.sqlite` in each
+dimension's `data` folder, with its `-wal`, `-shm` and `-journal` files) and, in singleplayer, SeedGenGlobe's copy of
+the Xaero LOD map of those dimensions (`seedgenglobe/lodmap/...` in the game folder). The world itself, Xaero's map of
+explored chunks and waypoints are not touched.
+
+Distant Horizons keeps its databases open while the world runs, so they are not deleted at once: confirming writes
+`seedgenglobe/regenerate-lods.txt` into the world folder, and the files are deleted when the world closes, once
+Distant Horizons has closed them (Save and Quit to Title in singleplayer, stopping a server). Anything still open or
+locked then is deleted the next time the world loads, before Distant Horizons opens it. Open the world again and
+Distant Horizons asks for every LOD anew. Until you leave, **Keep the LODs (undo)** (the same button) or
+`/seedgenglobe regenerate cancel` takes it back; so does deleting that file.
+
 ## Commands
 
 Everything players need is in the settings screen, the progress overlay and the status page. The commands are
-debugging tools for operators (in singleplayer, with cheats allowed):
+for operators (in singleplayer, with cheats allowed):
 
 | Command | What |
 |---|---|
+| `/seedgenglobe regenerate` | deletes this world's LODs so they are generated again (see above); send twice within 30 seconds |
+| `/seedgenglobe regenerate cancel` | keeps the LODs after all, until the world closes |
 | `/seedgenglobe debug status` | the server's side of the status page: settings, threads, per-dimension progress and Distant Horizons' queues, detected mods, anything that could not be set up |
 | `/seedgenglobe debug verify [radiusChunks]` | predicted surface vs. loaded chunks (default radius 8, max 32) |
 | `/seedgenglobe debug benchmark [sections] [detail]` | generation speed, on a background thread |
@@ -206,7 +227,8 @@ debugging tools for operators (in singleplayer, with cheats allowed):
 ## Configuration
 
 In game: Mod Menu > SeedGenGlobe (the button next to the mod), one page per category, every setting explained in
-its tooltip. Like Minecraft's own option screens, the title and the Status button (top right) stay at the top,
+its tooltip. After the page buttons, **Enabled** (green) / **Disabled** (red) is the master switch for everything
+SeedGenGlobe does; it takes effect after a game restart. Like Minecraft's own option screens, the title and the Status button (top right) stay at the top,
 Page defaults, Cancel and Save & quit stay at the bottom, and the page buttons and settings between them scroll when
 the window is too small. Settings with more than three values are sliders, the others buttons that step through
 their values. Most settings apply at once; the others say in their tooltip, and in the note above the bottom buttons
@@ -244,7 +266,7 @@ of sections.)
 
 | Key | In game | Default | Meaning |
 |---|---|---|---|
-| `enabled` | SeedGenGlobe | `true` | Master switch. Off: SeedGenGlobe does nothing and Distant Horizons and Xaero's maps behave as if it were not installed. *Takes effect after a game restart.* |
+| `enabled` | Enabled / Disabled (after the page buttons) | `true` | Master switch for everything SeedGenGlobe does: Distant Horizons LODs, multiplayer generation, the Xaero LOD maps, the Vertigo guard, Big Globe colours, progress and LOD regeneration. Off: SeedGenGlobe does nothing, and Distant Horizons and Xaero's maps behave as if it were not installed (a LOD regeneration confirmed before still completes). *Takes effect after a game restart.* |
 | `dhGeneration` | Distant Horizons LODs | `true` | Generate Distant Horizons LODs for Big Globe dimensions from Big Globe's terrain scripts. Off leaves them to Distant Horizons' own (much slower) generator; the Xaero LOD map still works. *Takes effect when a world is loaded again.* |
 | `dhChunkLodBuilding` | DH LODs from loaded chunks | `true` | Let Distant Horizons also build LODs from the real chunks players load, in dimensions SeedGenGlobe generates. While many of those wait, it stops asking SeedGenGlobe for sections. Off frees its threads for SeedGenGlobe, but buildings and other changes players make no longer show in LODs. |
 | `xaeroLodMap` | Xaero's World Map LOD map | `true` | Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more; LOD tiles already on the map stay until Xaero maps those chunks. |

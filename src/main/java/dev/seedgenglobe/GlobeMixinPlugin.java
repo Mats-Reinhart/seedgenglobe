@@ -124,7 +124,9 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
 		String name = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
 		GlobeConfig config = GlobeConfig.get();
-		if (!config.enabled || !ModCompat.DISTANT_HORIZONS || !ModCompat.BIG_GLOBE) return false;
+		// the master switch turns off every mixin but the credits line, which only changes how Mod Menu lists SeedGenGlobe
+		boolean credits = name.equals("ModMenuCreditsMixin");
+		if (!credits && (!config.enabled || !ModCompat.DISTANT_HORIZONS || !ModCompat.BIG_GLOBE)) return false;
 		boolean wanted = switch (name) {
 			case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> config.clientGeneration;
 			case "SharedApiMixin" -> true; // dhChunkLodBuilding can be switched off at any time

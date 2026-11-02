@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -22,6 +23,10 @@ import dev.seedgenglobe.OptionSteps;
  * SeedGenGlobe's settings in game (Mod Menu's config button). Made from {@link GlobeConfig#OPTIONS}: one page per
  * category, the setting's description as its tooltip. Settings with more than three values get a slider, the others a
  * button that steps through them (see {@link OptionSteps}).
+ * <p>
+ * The master switch ({@code enabled}) is not on a page: it is the Enabled / Disabled button right after the page
+ * buttons, in green or red, so it can be seen from every page. The General page also has the "Regenerate LODs..."
+ * button ({@link RegenerateLods}).
  * <p>
  * Laid out like Minecraft's own option screens: the title (and the Status button, top right) stays at the top, the
  * Page defaults, Cancel and Save &amp; quit buttons stay at the bottom, and the page buttons and settings between them
@@ -73,9 +78,12 @@ public final class ConfigScreen extends Screen {
 		int available = Math.max(60, this.width - 2 * SIDE);
 		List<Option<?>> options = new ArrayList<>();
 		for (Option<?> option : GlobeConfig.OPTIONS) {
-			if (option.category == this.category && !option.key.equals("generatorPriority")) options.add(option);
+			if (option.category == this.category && onPage(option)) options.add(option);
 		}
-		int columns = available >= 2 * MIN_TWO_COLUMN_WIDTH + GAP && options.size() > 4 ? 2 : 1;
+		// the General page ends with the Regenerate LODs button, laid out like a setting
+		boolean regenerate = this.category == Category.GENERAL;
+		int cells = options.size() + (regenerate ? 1 : 0);
+		int columns = available >= 2 * MIN_TWO_COLUMN_WIDTH + GAP && cells > 4 ? 2 : 1;
 		int columnWidth = Math.min(COLUMN_WIDTH, columns == 2 ? (available - GAP) / 2 : available);
 		int optionsWidth = columns * columnWidth + (columns - 1) * GAP;
 		int left = this.width / 2 - optionsWidth / 2;
@@ -84,31 +92,39 @@ public final class ConfigScreen extends Screen {
 		OptionList list = new OptionList(minecraft, this.width, Math.max(ROW, this.height - HEADER - footer), HEADER, ROW, Math.max(tabsWidth, optionsWidth));
 
 		Category[] categories = Category.values();
+		// the page buttons, then the Enabled / Disabled switch in the slot right after the last of them
+		int slots = categories.length + 1;
 		// as many full-width page buttons as fit, but two narrower ones rather than one per row while they can be 70 wide
-		int perRow = Math.max(1, Math.min(categories.length, Math.max(
+		int perRow = Math.max(1, Math.min(slots, Math.max(
 			(tabsWidth + TAB_GAP) / (TAB_WIDTH + TAB_GAP),
 			Math.min(2, (tabsWidth + TAB_GAP) / (MIN_TAB_WIDTH + TAB_GAP))
 		)));
-		for (int first = 0; first < categories.length; first += perRow) {
-			int inRow = Math.min(perRow, categories.length - first);
+		for (int first = 0; first < slots; first += perRow) {
+			int inRow = Math.min(perRow, slots - first);
 			int tabWidth = Math.min(TAB_WIDTH, (tabsWidth - (perRow - 1) * TAB_GAP) / perRow);
 			int x = this.width / 2 - (inRow * (tabWidth + TAB_GAP) - TAB_GAP) / 2;
 			List<AbstractWidget> tabs = new ArrayList<>();
 			for (int i = 0; i < inRow; i++) {
+				int tabX = x + i * (tabWidth + TAB_GAP);
+				if (first + i == categories.length) {
+					tabs.add(this.enabledSwitch(tabX, tabWidth));
+					continue;
+				}
 				Category tab = categories[first + i];
 				Button button = Button.builder(Component.literal(tab.label), pressed -> {
 					this.category = tab;
 					this.rebuildWidgets();
-				}).bounds(x + i * (tabWidth + TAB_GAP), 0, tabWidth, BUTTON_HEIGHT).build();
+				}).bounds(tabX, 0, tabWidth, BUTTON_HEIGHT).build();
 				button.active = tab != this.category;
 				tabs.add(button);
 			}
 			list.add(tabs);
 		}
-		for (int first = 0; first < options.size(); first += columns) {
+		for (int first = 0; first < cells; first += columns) {
 			List<AbstractWidget> row = new ArrayList<>();
-			for (int column = 0; column < columns && first + column < options.size(); column++) {
-				row.add(this.widget(options.get(first + column), left + column * (columnWidth + GAP), columnWidth));
+			for (int column = 0; column < columns && first + column < cells; column++) {
+				int cell = first + column, cellX = left + column * (columnWidth + GAP);
+				row.add(cell < options.size() ? this.widget(options.get(cell), cellX, columnWidth) : RegenerateLods.button(this, cellX, columnWidth));
 			}
 			list.add(row);
 		}
@@ -120,7 +136,7 @@ public final class ConfigScreen extends Screen {
 		int x = this.width / 2 - (3 * buttonWidth + 2 * 4) / 2;
 		this.addRenderableWidget(tooltip(Button.builder(Component.literal("Page defaults"), pressed -> {
 			for (Option<?> option : GlobeConfig.OPTIONS) {
-				if (option.category == this.category) resetValue(option, this.edit);
+				if (option.category == this.category && onPage(option)) resetValue(option, this.edit);
 			}
 			this.rebuildWidgets();
 		}).bounds(x, bottom, buttonWidth, BUTTON_HEIGHT).build(), "Puts the settings of this page back to their defaults."));
@@ -134,6 +150,36 @@ public final class ConfigScreen extends Screen {
 		}).bounds(x + 2 * (buttonWidth + 4), bottom, buttonWidth, BUTTON_HEIGHT).build();
 		this.addRenderableWidget(this.save);
 		this.updateSaveTooltip();
+	}
+
+	/**
+	 * Whether a setting is shown on its page: the master switch has its own button next to the page buttons, and
+	 * {@code generatorPriority} is only in the file.
+	 */
+	static boolean onPage(Option<?> option) {
+		return !option.key.equals(ENABLED) && !option.key.equals("generatorPriority");
+	}
+
+	static final String ENABLED = "enabled";
+
+	/** The master switch, after the page buttons: "Enabled" in green or "Disabled" in red, for the edited settings. */
+	private Button enabledSwitch(int x, int width) {
+		Option<?> option = GlobeConfig.option(ENABLED);
+		Button button = Button.builder(enabledMessage(this.edit.enabled), pressed -> {
+			this.edit.enabled = !this.edit.enabled;
+			pressed.setMessage(enabledMessage(this.edit.enabled));
+			this.updateSaveTooltip();
+		}).bounds(x, 0, width, BUTTON_HEIGHT).build();
+		return tooltip(button, option.description + "\n\n" + option.apply.note);
+	}
+
+	static Component enabledMessage(boolean enabled) {
+		return Component.literal(enabled ? "Enabled" : "Disabled").withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.RED);
+	}
+
+	/** Builds the screen again (the Regenerate LODs button after its outcome arrived). */
+	void refresh() {
+		this.rebuildWidgets();
 	}
 
 	/** Sets a tooltip on a widget (through AbstractWidget, where the method is declared). */

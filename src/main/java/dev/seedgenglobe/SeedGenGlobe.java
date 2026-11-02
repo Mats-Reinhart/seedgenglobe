@@ -6,8 +6,10 @@ import org.slf4j.Logger;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -16,6 +18,7 @@ import dev.seedgenglobe.command.GlobeCommands;
 import dev.seedgenglobe.gen.Focus;
 import dev.seedgenglobe.gen.SectionScheduler;
 import dev.seedgenglobe.gen.ServerLoad;
+import dev.seedgenglobe.regen.LodRegeneration;
 import dev.seedgenglobe.terrain.GlobeTerrain;
 
 /**
@@ -51,6 +54,13 @@ public final class SeedGenGlobe implements ModInitializer {
 			}
 		}
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> GlobeCommands.register(dispatcher));
+		// LOD regeneration deletes Distant Horizons' databases once DH has closed them: after its SERVER_STOPPED
+		// listener (default phase), or when the world loads next. Registered even while SeedGenGlobe is switched off,
+		// so a regeneration confirmed before that still completes.
+		Identifier afterDistantHorizons = Identifier.fromNamespaceAndPath(MOD_ID, "after_distant_horizons");
+		ServerLifecycleEvents.SERVER_STOPPED.addPhaseOrdering(Event.DEFAULT_PHASE, afterDistantHorizons);
+		ServerLifecycleEvents.SERVER_STOPPED.register(afterDistantHorizons, LodRegeneration::onServerStopped);
+		ServerLifecycleEvents.SERVER_STARTING.register(LodRegeneration::onServerStarting);
 		if (!config.enabled) return;
 		// the scheduler follows changed settings (thread count, priority) as soon as it runs
 		GlobeConfig.onChange(SectionScheduler.get()::reconfigureIfRunning);

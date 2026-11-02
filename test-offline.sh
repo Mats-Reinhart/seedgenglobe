@@ -15,6 +15,8 @@
 #  9. ConfigTest: the settings file (round trip of every option, broken values, clamping, 1.2.0 files), the config
 #     screen's values per setting (sliders, steps, arrow keys) and progress distances in chunks or blocks.
 # 10. StructureSizeTest: the detail levels small structure sets stop at.
+# 11. LodRegenerationTest: what LOD regeneration deletes from a made-up world and LOD map folder (only Distant
+#     Horizons databases in the world, only the named map folders, open databases left for the next run).
 # Run build-offline.sh first.
 set -euo pipefail
 
@@ -58,7 +60,8 @@ mkdir -p "$OUT/support"
 	"$HERE/src/test/java/dev/seedgenglobe/xaero/LodMapGeometryTest.java" \
 	"$HERE/src/test/java/dev/seedgenglobe/gen/SchedulerTest.java" \
 	"$HERE/src/test/java/dev/seedgenglobe/config/ConfigTest.java" \
-	"$HERE/src/test/java/dev/seedgenglobe/structures/StructureSizeTest.java"
+	"$HERE/src/test/java/dev/seedgenglobe/structures/StructureSizeTest.java" \
+	"$HERE/src/test/java/dev/seedgenglobe/regen/LodRegenerationTest.java"
 RUN="$OUT/support:$OUT/real:$CP"
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.terrain.CanopyMathTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.terrain.GroundCoverTest
@@ -66,3 +69,4 @@ RUN="$OUT/support:$OUT/real:$CP"
 "$JDK/bin/java" -ea -Dseedgenglobe.test.quiet=true -cp "$RUN" dev.seedgenglobe.gen.SchedulerTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.config.ConfigTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.structures.StructureSizeTest
+"$JDK/bin/java" -ea -Dseedgenglobe.test.quiet=true -cp "$RUN" dev.seedgenglobe.regen.LodRegenerationTest

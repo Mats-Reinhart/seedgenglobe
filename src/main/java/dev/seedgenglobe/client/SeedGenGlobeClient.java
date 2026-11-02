@@ -37,6 +37,8 @@ public final class SeedGenGlobeClient implements ClientModInitializer {
 			// set up even when switched off in the settings, so it can be switched on in game
 			try {
 				dev.seedgenglobe.xaero.XaeroLodMap.init();
+				// LOD regeneration clears the map's folders through it, after it let go of them
+				dev.seedgenglobe.regen.LodRegeneration.setMapCleaner(dev.seedgenglobe.xaero.XaeroLodMap::discard);
 				xaero = true;
 			}
 			catch (LinkageError error) {

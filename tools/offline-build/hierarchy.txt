@@ -68,3 +68,8 @@ field net/minecraft/client/gui/components/AbstractSelectionList centerListVertic
 method net/minecraft/client/gui/components/AbstractSelectionList$Entry getY ()I
 class net/minecraft/client/gui/components/AbstractSliderButton extends net/minecraft/client/gui/components/AbstractWidget
 field net/minecraft/client/gui/components/AbstractSliderButton value D
+# 1.3.2: LOD regeneration's confirm prompt, and the singleplayer server it schedules on
+class net/minecraft/client/gui/screens/ConfirmScreen extends net/minecraft/client/gui/screens/Screen
+interface it/unimi/dsi/fastutil/booleans/BooleanConsumer functional
+method it/unimi/dsi/fastutil/booleans/BooleanConsumer accept (Z)V
+class net/minecraft/client/server/IntegratedServer extends net/minecraft/server/MinecraftServer

@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.2
+
+### Regenerate LODs
+- New **Regenerate LODs...** button on the General page of the settings (singleplayer, with the world open) and
+  `/seedgenglobe regenerate` (operators). They delete Distant Horizons' LOD database of every dimension of the world
+  (`DistantHorizons.sqlite` and its `-wal`, `-shm` and `-journal` files) and, in singleplayer, SeedGenGlobe's copy of
+  the Xaero LOD map of those dimensions, so everything is generated again. The world, Xaero's map of explored chunks
+  and waypoints stay.
+- The button asks in Minecraft's confirm prompt; the command says what will be deleted (dimensions and size) and
+  confirms when sent again within 30 seconds.
+- Distant Horizons keeps its databases open while the world runs, so the files are deleted cleanly when the world
+  closes: after Distant Horizons' own shutdown, and only once every connection it had open on them reports closed.
+  Anything still open or locked then is deleted when the world loads next, before Distant Horizons opens it. Until
+  then the button (Keep the LODs) or `/seedgenglobe regenerate cancel` takes it back. What is scheduled is kept in
+  `seedgenglobe/regenerate-lods.txt` in the world folder; only Distant Horizons databases inside the world folder and
+  SeedGenGlobe's own map folders are ever deleted, whatever that file says.
+- The status page says when a regeneration is scheduled.
+
+### Master switch
+- The master switch (`enabled`) moved from the General page to a button right after the page buttons: **Enabled** in
+  green or **Disabled** in red, visible on every page. As before it governs everything SeedGenGlobe does and takes
+  effect after a game restart; Page defaults no longer touches it. A regeneration confirmed before switching off still
+  completes, and Mod Menu's short credits line stays.
+
 ## 1.3.1
 
 ### Settings screen (Mod Menu)

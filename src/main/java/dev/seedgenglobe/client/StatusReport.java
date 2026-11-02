@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.server.MinecraftServer;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.GlobeMixinPlugin;
@@ -12,6 +13,7 @@ import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.gen.MemoryWatch;
 import dev.seedgenglobe.gen.SectionScheduler;
 import dev.seedgenglobe.gen.ServerLoad;
+import dev.seedgenglobe.regen.LodRegeneration;
 
 /**
  * Everything SeedGenGlobe can say about what it is doing on this client (and its singleplayer server), for the
@@ -48,6 +50,10 @@ public final class StatusReport {
 		}
 		if (minecraft.hasSingleplayerServer() && ModCompat.DISTANT_HORIZONS && !config.dhGeneration) {
 			lines.add("Distant Horizons LODs are switched off in the settings.");
+		}
+		MinecraftServer server = minecraft.getSingleplayerServer();
+		if (server != null && LodRegeneration.scheduled(server)) {
+			lines.add("LOD regeneration scheduled: this world's LODs are deleted when you leave it (undo on the General page).");
 		}
 		String colours;
 		if (!config.bigGlobeColors) colours = "off in the settings";

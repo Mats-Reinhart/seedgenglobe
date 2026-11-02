@@ -39,7 +39,10 @@ public final class GlobeConfig {
 
 	// ------------------------------------------------------------------------------------------------ values
 
-	/** Master switch. When false the mod registers nothing and Distant Horizons behaves as if it were absent. */
+	/**
+	 * Master switch. When false the mod registers nothing (no mixins either, but Mod Menu's credits line) and Distant
+	 * Horizons behaves as if it were absent. In game: the Enabled / Disabled button after the config screen's page buttons.
+	 */
 	public boolean enabled = true;
 	/** Generate Distant Horizons LODs for Big Globe dimensions. Off leaves Distant Horizons to its own generator. */
 	public boolean dhGeneration = true;
@@ -451,7 +454,7 @@ public final class GlobeConfig {
 	public static final List<Option<?>> OPTIONS = List.of(
 		// general
 		new BoolOption("enabled", Category.GENERAL, "SeedGenGlobe",
-			"Master switch. Off: SeedGenGlobe does nothing and Distant Horizons and Xaero's maps behave as if it were not installed.",
+			"Master switch for everything SeedGenGlobe does: Distant Horizons LODs, multiplayer generation, the Xaero LOD maps, the Vertigo guard, Big Globe colours, progress and LOD regeneration. Off: SeedGenGlobe does nothing, and Distant Horizons and Xaero's maps behave as if it were not installed (a LOD regeneration confirmed before still completes).",
 			Apply.RESTART, c -> c.enabled, (c, v) -> c.enabled = v),
 		new BoolOption("dhGeneration", Category.GENERAL, "Distant Horizons LODs",
 			"Generate Distant Horizons LODs for Big Globe dimensions from Big Globe's terrain scripts. Off leaves them to Distant Horizons' own (much slower) generator; the Xaero LOD map still works.",
