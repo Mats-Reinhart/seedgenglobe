@@ -1,0 +1,47 @@
+# kind name [extends X] [implements A,B] [arity=N]
+class net/minecraft/server/level/ServerLevel extends net/minecraft/world/level/Level implements net/minecraft/world/level/WorldGenLevel
+class net/minecraft/client/multiplayer/ClientLevel extends net/minecraft/world/level/Level
+class net/minecraft/world/level/Level implements net/minecraft/world/level/LevelAccessor
+interface net/minecraft/world/level/WorldGenLevel extends net/minecraft/world/level/ServerLevelAccessor
+interface net/minecraft/world/level/ServerLevelAccessor extends net/minecraft/world/level/LevelAccessor
+interface net/minecraft/world/level/LevelAccessor extends net/minecraft/world/level/LevelReader
+interface net/minecraft/world/level/LevelReader extends net/minecraft/world/level/BlockGetter
+interface net/minecraft/world/level/BlockGetter extends net/minecraft/world/level/LevelHeightAccessor
+interface net/minecraft/world/level/LevelHeightAccessor
+class net/minecraft/world/level/block/state/BlockState extends net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase
+class net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase extends net/minecraft/world/level/block/state/StateHolder
+class net/minecraft/world/level/block/state/StateHolder arity=2
+class net/minecraft/world/level/block/Block extends net/minecraft/world/level/block/state/BlockBehaviour
+class net/minecraft/world/level/block/LeavesBlock extends net/minecraft/world/level/block/Block
+class net/minecraft/world/level/block/LiquidBlock extends net/minecraft/world/level/block/Block
+interface net/minecraft/core/Holder arity=1
+class net/minecraft/resources/ResourceKey arity=1
+interface net/minecraft/core/Registry extends net/minecraft/core/HolderLookup$RegistryLookup arity=1
+interface net/minecraft/core/HolderLookup$RegistryLookup extends net/minecraft/core/HolderLookup,net/minecraft/core/HolderOwner arity=1
+interface net/minecraft/core/HolderLookup extends net/minecraft/core/HolderGetter arity=1
+interface net/minecraft/core/HolderGetter arity=1
+interface net/minecraft/core/HolderOwner arity=1
+interface net/minecraft/core/RegistryAccess extends net/minecraft/core/HolderLookup$Provider
+interface net/minecraft/core/HolderLookup$Provider extends net/minecraft/core/HolderGetter$Provider
+interface net/minecraft/core/HolderGetter$Provider
+class net/minecraft/world/level/chunk/LevelChunk extends net/minecraft/world/level/chunk/ChunkAccess
+class net/minecraft/world/level/chunk/ChunkAccess implements net/minecraft/world/level/BlockGetter
+class net/minecraft/client/player/LocalPlayer extends net/minecraft/client/player/AbstractClientPlayer
+class net/minecraft/client/player/AbstractClientPlayer extends net/minecraft/world/entity/player/Player
+class net/minecraft/world/entity/player/Player extends net/minecraft/world/entity/LivingEntity
+class net/minecraft/world/entity/LivingEntity extends net/minecraft/world/entity/Entity
+class net/minecraft/server/level/ServerPlayer extends net/minecraft/world/entity/player/Player
+class net/minecraft/world/level/chunk/ChunkGenerator
+class net/minecraft/server/level/ServerChunkCache extends net/minecraft/world/level/chunk/ChunkSource
+class net/minecraft/world/level/chunk/ChunkSource
+class it/unimi/dsi/fastutil/objects/ObjectArrayList extends java/util/AbstractList bare sig=<T0:Ljava/lang/Object;>Ljava/util/AbstractList<TT0;>;
+class net/minecraft/network/chat/MutableComponent implements net/minecraft/network/chat/Component
+interface net/minecraft/network/chat/Component
+interface net/minecraft/client/renderer/block/BlockAndTintGetter extends net/minecraft/world/level/BlockGetter
+class net/minecraft/core/Holder$Reference implements net/minecraft/core/Holder sig=<T0:Ljava/lang/Object;>Ljava/lang/Object;Lnet/minecraft/core/Holder<TT0;>;
+class net/minecraft/core/BlockPos$MutableBlockPos extends net/minecraft/core/BlockPos
+method net/fabricmc/api/ModInitializer onInitialize ()V
+method net/fabricmc/api/ClientModInitializer onInitializeClient ()V
+interface net/fabricmc/api/ModInitializer
+interface net/fabricmc/api/ClientModInitializer
+class net/minecraft/world/level/material/FluidState extends net/minecraft/world/level/block/state/StateHolder
