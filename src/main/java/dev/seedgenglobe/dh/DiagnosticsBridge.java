@@ -27,6 +27,12 @@ public final class DiagnosticsBridge {
 		List<GlobeWorldGenerator> generators = DhBridge.serverGenerators();
 		for (GlobeWorldGenerator generator : generators) {
 			lines.add(generator.stats.name + ": " + generator.stats.summary());
+			if (generator.structures() != null) lines.addAll(generator.structures().statusLines());
+		}
+		if (!generators.isEmpty()) {
+			lines.add("Sections run on " + GeneratorThreads.describe() + ".");
+			String pipeline = DhPipeline.describe(GeneratorThreads.ownThreads());
+			if (pipeline != null) lines.add(pipeline);
 		}
 		String advice = generators.isEmpty() ? null : DhBridge.nSizedAdvice();
 		if (advice != null) lines.add("Note: " + advice);
@@ -71,6 +77,17 @@ public final class DiagnosticsBridge {
 		@Override
 		public synchronized ColumnProfile column(int x, int z) {
 			return this.sampler.probe(x, z, this.generator.levelMinY(), this.generator.levelMaxY(), this.generator.topSkyLight());
+		}
+
+		@Override
+		public @Nullable List<String> structures(int x, int z, int radius, int tier, int limit) {
+			if (this.generator.structures() == null) return null;
+			return this.generator.structures().describe(x, z, radius, tier, limit);
+		}
+
+		@Override
+		public int structureDetail() {
+			return this.generator.structures() != null ? this.generator.structures().fullDetail() : -1;
 		}
 
 		@Override

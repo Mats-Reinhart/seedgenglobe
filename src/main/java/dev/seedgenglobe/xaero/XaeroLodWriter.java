@@ -49,8 +49,14 @@ import dev.seedgenglobe.SeedGenGlobe;
  * with "being written" set, tiles are only touched under the region's writer lock while it is loaded and resting,
  * and changed tile chunks are queued for Xaero's own texture update and saving. Only tiles Xaero has not mapped
  * itself are filled (or tiles Xaero recorded as empty, which happens when Vertigo had not synced a chunk's surface).
- * A filled tile carries the LOD detail level in its "world interpretation version", so finer LOD data can replace
- * it later, and Xaero maps the real chunk over it as soon as the chunk is loaded (see {@code XaeroLodTileMixin}).
+ * A filled tile carries the detail level of its LOD data in its "world interpretation version" (the coarsest of its
+ * cells), so finer LOD data can replace it later, and Xaero maps the real chunk over it as soon as the chunk is loaded
+ * (see {@code XaeroLodTileMixin}).
+ * <p>
+ * The LOD map grows while Distant Horizons generates, so every region is filled again whenever the store saved a new
+ * revision of it; only tiles the new data improves are written. Regions Xaero has in memory (the minimap's and the
+ * open world map's) get new data within seconds; others are loaded for it only once their data stopped changing for
+ * a while, so a region is not loaded over and over while its sections are still coming in.
  * <p>
  * Regions are filled nearest first. Which regions a map already holds is remembered per map:
  * <ul>
@@ -73,6 +79,8 @@ final class XaeroLodWriter {
 	static final int MAX_FORCED_IN_MEMORY = 6;
 	static final long RESCAN_MILLIS = 30_000L;
 	static final long LOAD_TIMEOUT_MILLIS = 60_000L;
+	/** A region Xaero does not hold in memory is loaded for new LOD data once that data is this old. */
+	static final long SETTLE_MILLIS = 15_000L;
 
 	/** Results of filling or visiting a region. */
 	static final int DONE = 0, OUT_OF_TIME = 1, BUSY = 2, WAIT = 3, STOP = 4;
@@ -84,8 +92,8 @@ final class XaeroLodWriter {
 	/** Scan position: square rings of regions around the player's region, nearest first. */
 	private int scanRegionX = Integer.MIN_VALUE, scanRegionZ = Integer.MIN_VALUE, ring, step;
 	private long scanStarted;
-	/** Regions the builder just computed, visited ahead of the scan (the builder works nearest first too). */
-	private final java.util.ArrayDeque<Long> fresh = new java.util.ArrayDeque<>();
+	/** Regions the builder just saved, visited ahead of the scan, each once. */
+	private final java.util.LinkedHashSet<Long> fresh = new java.util.LinkedHashSet<>();
 	private final Map<Long, RegionState> outstanding = new HashMap<>();
 	/** Regions written this session that Xaero has not saved and let go of yet. */
 	private final List<RegionState> pending = new ArrayList<>();
@@ -96,13 +104,13 @@ final class XaeroLodWriter {
 
 	long filledTiles, filledRegions, requestedLoads, registeredRegions;
 
-	/** One region in the index of a map: the detail level filled into it and when (for the texture cache check). */
-	record Filled(int detail, long time) {}
+	/** One region in the index of a map: the detail level and revision filled into it, and when (for the texture cache check). */
+	record Filled(int detail, long revision, long time) {}
 
 	/** Per dimension and map: where the LOD map comes from and which regions this map already holds. */
 	static final class Target {
 
-		static final int INDEX_MAGIC = 0x53474D49, INDEX_VERSION = 1;
+		static final int INDEX_MAGIC = 0x53474D49, INDEX_VERSION = 2;
 
 		final ResourceKey<Level> dimension;
 		final LodMapStore store;
@@ -134,8 +142,9 @@ final class XaeroLodWriter {
 						for (int i = 0; i < count; i++) {
 							long key = in.readLong();
 							int detail = in.readByte();
+							long revision = in.readLong();
 							long time = in.readLong();
-							this.filled.put(key, new Filled(detail, time));
+							this.filled.put(key, new Filled(detail, revision, time));
 						}
 					}
 				}
@@ -154,7 +163,7 @@ final class XaeroLodWriter {
 			this.indexDirty = false;
 			byte[] bytes;
 			try {
-				ByteArrayOutputStream buffer = new ByteArrayOutputStream(64 + this.filled.size() * 17);
+				ByteArrayOutputStream buffer = new ByteArrayOutputStream(64 + this.filled.size() * 25);
 				DataOutputStream out = new DataOutputStream(buffer);
 				out.writeInt(INDEX_MAGIC);
 				out.writeInt(INDEX_VERSION);
@@ -163,6 +172,7 @@ final class XaeroLodWriter {
 				for (Map.Entry<Long, Filled> entry : this.filled.entrySet()) {
 					out.writeLong(entry.getKey());
 					out.writeByte(entry.getValue().detail());
+					out.writeLong(entry.getValue().revision());
 					out.writeLong(entry.getValue().time());
 				}
 				out.flush();
@@ -192,11 +202,13 @@ final class XaeroLodWriter {
 		final int regionX, regionZ;
 		/** The Xaero region being filled or last filled. */
 		@Nullable MapRegion region;
-		/** Detail level of the fill in progress, its next tile chunk, and whether it wrote anything so far. */
+		/** Detail level and revision of the fill in progress, its next tile chunk, and whether it wrote anything so far. */
 		int fillingDetail = -1, nextTileChunk;
+		long fillingRevision = -1L;
 		boolean wroteAny;
-		/** Detail level put into Xaero's map (or found there) this session, or -1. */
+		/** Detail level and revision put into Xaero's map (or found there) this session, or -1. */
 		int filledDetail = -1;
+		long filledRevision = -1L;
 		/** When the fill was finished, and when it last changed a tile (Xaero must save and cache after that). */
 		long filledAt, lastWriteAt;
 		long requestedAt, lastRequest;
@@ -289,7 +301,7 @@ final class XaeroLodWriter {
 		this.target = target;
 		this.builder.setTarget(builderTarget);
 		SeedGenGlobe.LOGGER.info(
-			"SeedGenGlobe: writing LOD terrain into Xaero's map of {} within {} blocks ({} regions computed, {} already in this map, {}).",
+			"SeedGenGlobe: writing LOD terrain into Xaero's map of {} within {} blocks ({} regions with LOD data, {} already in this map, {}); it follows Distant Horizons' generation as it happens.",
 			level.dimension().identifier(),
 			target.radiusBlocks,
 			target.store.regionCount(),
@@ -325,17 +337,18 @@ final class XaeroLodWriter {
 			this.scanStarted = now;
 		}
 		Long key;
-		while ((key = this.builder.computed.poll()) != null) this.fresh.addLast(key);
+		while ((key = this.builder.computed.poll()) != null) this.fresh.add(key);
 	}
 
 	/** @return false when the time budget ran out */
 	private boolean workFresh(MapProcessor processor, Target target, int x, int z, long deadline, long now) {
 		while (!this.fresh.isEmpty()) {
 			if (System.nanoTime() > deadline) return false;
-			int result = this.visit(processor, target, this.fresh.peekFirst(), x, z, deadline, now);
+			Long key = this.fresh.iterator().next();
+			int result = this.visit(processor, target, key, x, z, deadline, now);
 			if (result == OUT_OF_TIME) return false;
 			if (result == WAIT || result == STOP) return true; // come back to it next tick; the scan may go on meanwhile
-			this.fresh.pollFirst();
+			this.fresh.remove(key);
 		}
 		return true;
 	}
@@ -357,25 +370,27 @@ final class XaeroLodWriter {
 	private int visit(MapProcessor processor, Target target, long key, int x, int z, long deadline, long now) {
 		int regionX = LodRegion.keyX(key), regionZ = LodRegion.keyZ(key);
 		if (LodMapBuilder.distanceToRegion(x, z, regionX, regionZ) > target.radiusBlocks) return DONE;
-		int stored = target.store.detail(regionX, regionZ);
-		if (stored < 0) return DONE; // not computed yet; the builder's notice brings it back
+		LodMapStore.Meta meta = target.store.meta(regionX, regionZ);
+		if (meta == null) return DONE; // nothing yet; the builder's notice brings it back
 		if (this.outstanding.containsKey(key)) return DONE;
 		RegionState state = this.states.get(key);
 		if (state != null) {
 			if (state.skipUntil > now) return DONE;
-			if (state.filledDetail >= 0 && state.filledDetail <= stored) {
+			if (state.filledDetail == meta.detail() && state.filledRevision == meta.revision()) {
 				if (!state.registered || this.knownToXaero(processor, regionX, regionZ)) return DONE;
 				// Xaero dropped the region it was to show from its cache (the cache was outdated): fill it again
 				state.registered = false;
 				state.filledDetail = -1;
+				state.filledRevision = -1L;
 				this.forget(target, key);
 			}
 		}
 		Filled filled = target.filled.get(key);
-		if (filled != null && filled.detail() <= stored) {
+		if (filled != null && filled.detail() == meta.detail() && filled.revision() == meta.revision()) {
 			if (state == null) state = this.state(key);
 			if (this.stillInMap(processor, target, regionX, regionZ, filled, state)) {
 				state.filledDetail = filled.detail();
+				state.filledRevision = filled.revision();
 				return DONE;
 			}
 			this.forget(target, key);
@@ -392,6 +407,8 @@ final class XaeroLodWriter {
 			}
 			return result;
 		}
+		// sections are still coming in: wait before loading the region, the builder's notice brings it back
+		if (meta.changedAt() > 0L && now - meta.changedAt() < SETTLE_MILLIS) return DONE;
 		if (this.outstanding.size() >= MAX_OUTSTANDING_LOADS || this.forcedInMemory() >= MAX_FORCED_IN_MEMORY) return STOP;
 		MapRegion region = existing != null ? existing : processor.getLeafMapRegion(SURFACE_LAYER, regionX, regionZ, true);
 		if (region == null) return DONE;
@@ -456,8 +473,8 @@ final class XaeroLodWriter {
 		}
 	}
 
-	private void remember(Target target, long key, int detail, long time) {
-		target.filled.put(key, new Filled(detail, time));
+	private void remember(Target target, long key, int detail, long revision, long time) {
+		target.filled.put(key, new Filled(detail, revision, time));
 		target.indexDirty = true;
 	}
 
@@ -465,12 +482,12 @@ final class XaeroLodWriter {
 		if (target.filled.remove(key) != null) target.indexDirty = true;
 	}
 
-	/** Region data in memory, or null after asking the builder to read it. */
+	/** The region's current data in memory, or null after asking the builder to read it. */
 	private @Nullable LodRegion data(Target target, int regionX, int regionZ) {
-		int stored = target.store.detail(regionX, regionZ);
-		if (stored < 0) return null;
+		LodMapStore.Meta meta = target.store.meta(regionX, regionZ);
+		if (meta == null) return null;
 		LodRegion data = target.store.cached(regionX, regionZ);
-		if (data != null && data.detail == stored) return data;
+		if (data != null && data.revision == meta.revision()) return data;
 		this.builder.requestLoad(regionX, regionZ);
 		return null;
 	}
@@ -514,7 +531,7 @@ final class XaeroLodWriter {
 			}
 			LodRegion data = this.data(target, state.regionX, state.regionZ);
 			if (data == null) {
-				if (target.store.detail(state.regionX, state.regionZ) < 0) {
+				if (target.store.meta(state.regionX, state.regionZ) == null) {
 					iterator.remove();
 					state.forced = false;
 				}
@@ -574,19 +591,22 @@ final class XaeroLodWriter {
 	private int sweepRegion(MapProcessor processor, Target target, MapRegion region, long deadline, long now) {
 		if (region.getLoadState() != 2) return DONE;
 		int regionX = region.getRegionX(), regionZ = region.getRegionZ();
-		int stored = target.store.detail(regionX, regionZ);
-		if (stored < 0) return DONE;
+		LodMapStore.Meta meta = target.store.meta(regionX, regionZ);
+		if (meta == null) return DONE;
+		int stored = meta.detail();
 		long key = LodRegion.key(regionX, regionZ);
 		if (this.outstanding.containsKey(key)) return DONE;
 		RegionState state = this.state(key);
 		if (state.skipUntil > now) return DONE;
-		boolean midway = state.region == region && state.fillingDetail == stored && state.nextTileChunk < 64;
+		boolean midway = state.region == region && state.fillingDetail == stored && state.fillingRevision == meta.revision() && state.nextTileChunk < 64;
 		if (!midway && !anyWritable(region, stored)) {
-			if (state.filledDetail < 0 || state.filledDetail > stored) state.filledDetail = stored;
+			// every tile is Xaero's own or as fine as the data gets
+			state.filledDetail = stored;
+			state.filledRevision = meta.revision();
 			return DONE;
 		}
 		LodRegion data = this.data(target, regionX, regionZ);
-		if (data == null) return target.store.detail(regionX, regionZ) < 0 ? DONE : WAIT;
+		if (data == null) return target.store.meta(regionX, regionZ) == null ? DONE : WAIT;
 		int result = this.fill(processor, target, region, data, state, deadline, now);
 		if (result == BUSY) {
 			state.skipUntil = now + 5_000L;
@@ -627,7 +647,7 @@ final class XaeroLodWriter {
 				// a singleplayer map's index entry is checked against the time Xaero's cache was written, so a
 				// region recorded before Xaero cached it is simply filled again next session
 				state.recorded = true;
-				this.remember(target, state.key, state.filledDetail, state.lastWriteAt);
+				this.remember(target, state.key, state.filledDetail, state.filledRevision, state.lastWriteAt);
 			}
 			if (release) {
 				iterator.remove();
@@ -645,9 +665,10 @@ final class XaeroLodWriter {
 	 * @return DONE, OUT_OF_TIME, or BUSY when Xaero is saving or caching the region
 	 */
 	private int fill(MapProcessor processor, Target target, MapRegion region, LodRegion data, RegionState state, long deadline, long now) {
-		if (state.region != region || state.fillingDetail != data.detail || state.nextTileChunk >= 64) {
+		if (state.region != region || state.fillingDetail != data.detail || state.fillingRevision != data.revision || state.nextTileChunk >= 64) {
 			state.region = region;
 			state.fillingDetail = data.detail;
+			state.fillingRevision = data.revision;
 			state.nextTileChunk = 0;
 			state.wroteAny = false;
 			state.recorded = false;
@@ -674,6 +695,7 @@ final class XaeroLodWriter {
 		}
 		if (result != DONE) return result;
 		state.filledDetail = data.detail;
+		state.filledRevision = data.revision;
 		state.filledAt = now;
 		this.filledRegions++;
 		if (state.wroteAny) {
@@ -685,7 +707,7 @@ final class XaeroLodWriter {
 		else {
 			// nothing to add: what is there is complete, as far as the index is concerned
 			Filled previous = target.filled.get(state.key);
-			this.remember(target, state.key, data.detail, previous != null ? previous.time() : 0L);
+			this.remember(target, state.key, data.detail, data.revision, previous != null ? previous.time() : 0L);
 			state.recorded = true;
 		}
 		return DONE;
@@ -730,9 +752,10 @@ final class XaeroLodWriter {
 			for (int ix = 0; ix < 4; ix++) {
 				for (int iz = 0; iz < 4; iz++) {
 					MapTile tile = tileChunk.getTile(ix, iz);
-					if (!writable(tile, data.detail)) continue;
 					int localX = ((lx << 2) + ix) << 4, localZ = ((lz << 2) + iz) << 4;
-					if (!tileHasData(data, localX, localZ)) continue;
+					// a tile is written whole or not at all, and carries the coarsest detail among its cells
+					int source = data.areaSource(localX, localZ, 16);
+					if (source >= LodRegion.NO_SOURCE || !writable(tile, source)) continue;
 					if (!created && written == 0) {
 						synchronized (region) {
 							region.setBeingWritten(true);
@@ -744,7 +767,7 @@ final class XaeroLodWriter {
 							tile.setBlock(x, z, block(tile.getBlock(x, z), data, data.cell(localX + x, localZ + z), writer, overlays, worldBottom));
 						}
 					}
-					tile.setWorldInterpretationVersion(MARKER | data.detail);
+					tile.setWorldInterpretationVersion(MARKER | Math.min(source, 15));
 					tile.setWrittenCave(Integer.MAX_VALUE, caveDepth);
 					tileChunk.setTile(ix, iz, tile, processor.getBlockStateShortShapeCache(), processor);
 					tile.setWrittenOnce(true);
@@ -843,24 +866,14 @@ final class XaeroLodWriter {
 		return true;
 	}
 
+	/** Whether any tile of the tile chunk has every cell known. */
 	static boolean hasData(LodRegion data, int lx, int lz) {
 		for (int ix = 0; ix < 4; ix++) {
 			for (int iz = 0; iz < 4; iz++) {
-				if (tileHasData(data, ((lx << 2) + ix) << 4, ((lz << 2) + iz) << 4)) return true;
+				if (data.areaSource(((lx << 2) + ix) << 4, ((lz << 2) + iz) << 4, 16) < LodRegion.NO_SOURCE) return true;
 			}
 		}
 		return false;
-	}
-
-	/** Every cell under the tile is known (a tile is written whole or not at all). */
-	static boolean tileHasData(LodRegion data, int localX, int localZ) {
-		int step = Math.min(1 << data.detail, 16);
-		for (int x = 0; x < 16; x += step) {
-			for (int z = 0; z < 16; z += step) {
-				if (data.empty(data.cell(localX + x, localZ + z))) return false;
-			}
-		}
-		return true;
 	}
 
 	/** One map pixel the way Xaero's writer builds it, reusing the pixel object a pooled tile still holds. */
@@ -896,7 +909,7 @@ final class XaeroLodWriter {
 		}
 		lines.add(String.format(
 			Locale.ROOT,
-			"Xaero LOD map: radius %d blocks, %d regions computed, %d in this map (%s)",
+			"Xaero LOD map: radius %d blocks, %d regions with LOD data, %d of them filled into this map (%s)",
 			target.radiusBlocks, target.store.regionCount(), target.filled.size(),
 			target.worldSave ? "singleplayer map, shown from Xaero's texture cache" : "saved by Xaero"
 		));

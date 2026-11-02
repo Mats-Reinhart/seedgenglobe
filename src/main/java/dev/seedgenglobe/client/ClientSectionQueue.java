@@ -20,13 +20,15 @@ import com.seibel.distanthorizons.core.util.threading.ThreadPoolUtil;
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.ModCompat;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.dh.GeneratorThreads;
 import dev.seedgenglobe.dh.GlobeWorldGenerator;
 
 /**
  * Nearest-first queue of LOD sections to generate on a multiplayer client.
  * <p>
- * Work runs on Distant Horizons' own world generation thread pool when it exists, so it respects DH's CPU
- * settings and its pause while the camera moves fast; only if that pool is missing does it use its own threads.
+ * Work runs on {@link GeneratorThreads}, like the server's: SeedGenGlobe's own threads by default, or Distant
+ * Horizons' world generation pool (with its CPU limits and its pause while the camera moves fast) when
+ * {@code generatorThreads} is -1; only if that pool is missing too does the queue start threads of its own.
  */
 final class ClientSectionQueue {
 
@@ -141,6 +143,8 @@ final class ClientSectionQueue {
 	}
 
 	private Executor executor() {
+		Executor own = GeneratorThreads.executor();
+		if (own != null) return own;
 		Executor executor = ThreadPoolUtil.getWorldGenExecutor();
 		if (executor != null) return executor;
 		synchronized (this) {

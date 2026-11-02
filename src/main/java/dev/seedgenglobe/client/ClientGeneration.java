@@ -135,7 +135,8 @@ public final class ClientGeneration {
 		GroundCover.Shared ground = GlobeConfig.get().groundCover && state.dimension.equals(Level.OVERWORLD)
 			? GroundCover.Shared.create(terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), terrain.worldInfo.seed(), null)
 			: null;
-		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name, ground);
+		// no structures: placing them needs the world seed, which a client never learns
+		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name, ground, null);
 		state.queue = new ClientSectionQueue(generator);
 		state.generator = generator;
 		SeedGenGlobe.LOGGER.info("SeedGenGlobe now generates Distant Horizons LODs on this client for {} ({}).", name, terrain);
@@ -232,15 +233,20 @@ public final class ClientGeneration {
 
 	public static List<String> statusLines() {
 		List<String> lines = new ArrayList<>();
+		boolean generating = false;
 		for (LevelState state : STATES.values()) {
 			GlobeWorldGenerator generator = state.generator;
 			if (generator != null) {
+				generating = true;
 				ClientSectionQueue queue = state.queue;
 				lines.add(generator.stats.name + ": " + generator.stats.summary() + (queue != null ? ", queue " + queue.waitingCount() + " waiting / " + queue.runningCount() + " running" : ""));
 			}
 			else {
 				lines.add(state.dimension.identifier() + " (client): waiting for Big Globe to sync terrain layers from the server");
 			}
+		}
+		if (generating) {
+			lines.add("Sections run on " + dev.seedgenglobe.dh.GeneratorThreads.describe() + ".");
 		}
 		return lines;
 	}

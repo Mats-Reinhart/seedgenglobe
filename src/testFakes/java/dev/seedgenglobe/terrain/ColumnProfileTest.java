@@ -45,6 +45,8 @@ public final class ColumnProfileTest {
 		emissiveBlocks();
 		overlays();
 		fuzz(20_000);
+		structureBlocks();
+		structureFuzz(20_000);
 		System.out.println("ColumnProfileTest: " + checks + " checks, " + failures + " failures");
 		if (failures > 0) System.exit(1);
 	}
@@ -267,6 +269,140 @@ public final class ColumnProfileTest {
 				profile.findSurface(profile.bottoms[profile.count - 1]);
 				if (!valid("fuzz " + i + " overlay " + o, profile, levelMin, levelMax)) break;
 			}
+		}
+	}
+
+	// --------------------------------------------------------------------------------------------- structures
+
+	static final BlockState PLANKS = Blocks.OAK_LOG.defaultBlockState();
+
+	/** Blocks a structure placed going into a column, the way CaptureView hands them over, then relit. */
+	static void structureBlocks() {
+		ColumnProfile house = plain();
+		place(house, run(PLANKS, 68, 69, 0), run(AIR, 64, 68, 0), run(PLANKS, 63, 64, 0));
+		expectRuns("a house on the grass", house,
+			run(AIR, 69, 320, 15),
+			run(PLANKS, 68, 69, 15),
+			run(AIR, 64, 68, 0),
+			run(PLANKS, 63, 64, 0),
+			run(DIRT, 60, 63, 0),
+			run(STONE, -63, 60, 0),
+			run(BEDROCK, -64, -63, 0)
+		);
+		check("house surface", house.surfaceTop == 69 && house.states[house.surfaceRun] == PLANKS, house);
+
+		ColumnProfile lake = plain();
+		place(lake, run(WATER, 60, 64, 0));
+		expectRuns("lake water over the ground", lake,
+			run(AIR, 64, 320, 15),
+			run(WATER, 60, 64, 15),
+			run(STONE, -63, 60, 11),
+			run(BEDROCK, -64, -63, 0)
+		);
+
+		ColumnProfile tower = plain();
+		place(tower, run(STONE, 300, 400, 0), run(GLOWSTONE, 299, 300, 0), run(STONE, -100, -60, 0));
+		expectRuns("a tower clipped to the level, with a lamp", tower,
+			run(STONE, 300, 320, 15),
+			run(GLOWSTONE, 299, 300, 0),
+			run(AIR, 64, 299, 0),
+			run(GRASS, 63, 64, 0),
+			run(DIRT, 60, 63, 0),
+			run(STONE, -64, 60, 0)
+		);
+		check("lamp light", tower.blockLight[tower.runAt(299)] == 15, tower);
+
+		ColumnProfile same = plain();
+		place(same, run(AIR, 100, 101, 0), run(STONE, 10, 20, 0));
+		expectRuns("writing what is there changes nothing", same,
+			run(AIR, 64, 320, 15),
+			run(GRASS, 63, 64, 15),
+			run(DIRT, 60, 63, 0),
+			run(STONE, -63, 60, 0),
+			run(BEDROCK, -64, -63, 0)
+		);
+
+		ColumnProfile glass = plain();
+		place(glass, run(SNOW, 63, 64, 0));
+		check("blocks that let sky light through keep it", glass.skyLight[glass.runAt(62)] == 15, glass);
+
+		ColumnProfile copy = new ColumnProfile();
+		copy.copyFrom(house);
+		check("copy", copy.count == house.count && copy.surfaceTop == house.surfaceTop && copy.toString().equals(house.toString()), copy);
+		check("stateAt", house.stateAt(68) == PLANKS && house.stateAt(65) == AIR && house.stateAt(500) == null && house.stateAt(-65) == null, house);
+	}
+
+	static void place(ColumnProfile profile, Run... runs) {
+		BlockState[] states = new BlockState[runs.length];
+		int[] bottoms = new int[runs.length], tops = new int[runs.length];
+		for (int i = 0; i < runs.length; i++) {
+			states[i] = runs[i].state();
+			bottoms[i] = runs[i].bottom();
+			tops[i] = runs[i].top();
+		}
+		int bottom = profile.bottoms[profile.count - 1];
+		profile.replaceRuns(runs.length, states, bottoms, tops);
+		profile.relight(15);
+		profile.findSurface(bottom);
+	}
+
+	/** Random columns, random placed blocks: compared block by block and light by light against a plain model. */
+	static void structureFuzz(int iterations) {
+		Random random = new Random(1_2_0L);
+		BlockState[] palette = { AIR, STONE, DIRT, GRASS, SAND, WATER, LEAVES, GLOWSTONE, SNOW };
+		for (int i = 0; i < iterations; i++) {
+			int levelMin = (random.nextInt(9) - 4) * 64;
+			int levelMax = levelMin + 64 + random.nextInt(600);
+			BlockSegmentList list = new BlockSegmentList(levelMin, levelMax);
+			int y = levelMin;
+			while (y < levelMax) {
+				int top = Math.min(levelMax - 1, y + random.nextInt(random.nextBoolean() ? 6 : 120));
+				list.fixed(y, top, palette[random.nextInt(palette.length)]);
+				y = top + 1;
+			}
+			ColumnProfile profile = new ColumnProfile();
+			int sky = random.nextBoolean() ? 15 : 0;
+			profile.build(COLUMN, list, levelMin, levelMax, (byte)(sky), AIR);
+			BlockState[] model = new BlockState[levelMax - levelMin];
+			for (int yy = levelMin; yy < levelMax; yy++) model[yy - levelMin] = profile.stateAt(yy);
+			// non-overlapping write runs, top-down, some of them sticking out of the level
+			List<Run> writes = new ArrayList<>();
+			int cursor = levelMax + random.nextInt(20);
+			while (cursor > levelMin - 20 && writes.size() < 12) {
+				cursor -= random.nextInt(40);
+				int top = cursor;
+				int bottom = top - 1 - random.nextInt(random.nextBoolean() ? 3 : 60);
+				writes.add(run(palette[random.nextInt(palette.length)], bottom, top, 0));
+				cursor = bottom;
+			}
+			for (Run write : writes) {
+				for (int yy = Math.max(write.bottom(), levelMin); yy < Math.min(write.top(), levelMax); yy++) model[yy - levelMin] = write.state();
+			}
+			BlockState[] states = new BlockState[writes.size()];
+			int[] bottoms = new int[writes.size()], tops = new int[writes.size()];
+			for (int w = 0; w < writes.size(); w++) {
+				states[w] = writes.get(w).state();
+				bottoms[w] = writes.get(w).bottom();
+				tops[w] = writes.get(w).top();
+			}
+			profile.replaceRuns(writes.size(), states, bottoms, tops);
+			profile.relight(sky);
+			profile.findSurface(levelMin);
+			if (!valid("structure fuzz " + i, profile, levelMin, levelMax)) continue;
+			boolean blocks = true, light = true;
+			int expectedLight = sky;
+			for (int yy = levelMax - 1; yy >= levelMin; yy--) {
+				if (profile.stateAt(yy) != model[yy - levelMin]) blocks = false;
+			}
+			for (int run = 0; run < profile.count; run++) {
+				BlockState state = profile.states[run];
+				if (profile.skyLight[run] != expectedLight || profile.blockLight[run] != state.getLightEmission()) light = false;
+				if (!state.propagatesSkylightDown()) {
+					expectedLight = Math.max(0, expectedLight - Math.max(1, state.getLightDampening()) * (profile.tops[run] - profile.bottoms[run]));
+				}
+			}
+			check("structure fuzz " + i + ": blocks", blocks, profile);
+			check("structure fuzz " + i + ": light", light, profile);
 		}
 	}
 
