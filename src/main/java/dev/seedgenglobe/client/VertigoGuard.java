@@ -15,6 +15,7 @@ import com.seibel.distanthorizons.core.wrapperInterfaces.world.ILevelWrapper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.ModCompat;
@@ -206,6 +207,34 @@ public final class VertigoGuard {
 					if (!found) return false;
 				}
 			}
+		}
+		return true;
+	}
+
+	/**
+	 * Render thread: whether every section holding the chunk's surface (and the section below the lowest surface
+	 * block, for shallow water) has been synced by Vertigo. Heightmaps come with the chunk packet and describe the
+	 * whole chunk, so they show where the surface is even when its sections are missing.
+	 */
+	public static boolean surfaceSynced(LevelChunk chunk) {
+		int bottom = chunk.getMinY();
+		int lowest = Integer.MAX_VALUE, highest = Integer.MIN_VALUE;
+		for (int x = 0; x < 16; x++) {
+			for (int z = 0; z < 16; z++) {
+				int y = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
+				if (y < bottom) continue;
+				if (y < lowest) lowest = y;
+				if (y > highest) highest = y;
+			}
+		}
+		if (lowest > highest) return true; // no blocks at all according to the server
+		int minSection = bottom >> 4;
+		int maxSection = (chunk.getMaxY()) >> 4;
+		int from = Math.max((lowest >> 4) - 1, minSection);
+		int to = Math.min(highest >> 4, maxSection);
+		int chunkX = chunk.getPos().x(), chunkZ = chunk.getPos().z();
+		for (int section = from; section <= to; section++) {
+			if (!VertigoHooks.sectionLoaded(chunkX, section, chunkZ)) return false;
 		}
 		return true;
 	}

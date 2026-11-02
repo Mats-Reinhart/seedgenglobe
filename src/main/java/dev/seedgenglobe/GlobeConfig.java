@@ -36,6 +36,16 @@ public final class GlobeConfig {
 	public boolean sampleCellCenter = true;
 	/** Approximate tree canopies from Big Globe's foliage and wood palette data, so forests stay forests at a distance. */
 	public boolean trees = true;
+	/**
+	 * Put Big Globe's ground cover (grass, ferns, flowers, leaf litter, petals, sticks, rocks, bushes) on generated LODs,
+	 * so they are coloured like LODs built from real chunks and explored areas do not stand out as squares.
+	 */
+	public boolean groundCover = true;
+	/**
+	 * Let generated sections also rewrite their coarser parent sections, as Distant Horizons does for other generators.
+	 * Off (the default) avoids holes while LODs are still being built and saves a lot of database work.
+	 */
+	public boolean updateParentSections = false;
 	/** Multiplayer: generate LODs on this client from the terrain scripts Big Globe syncs, when the server has no Distant Horizons. */
 	public boolean clientGeneration = true;
 	/** Multiplayer: also generate locally when the server runs Distant Horizons (instead of downloading LODs from it). */
@@ -46,6 +56,10 @@ public final class GlobeConfig {
 	public boolean vertigoGuard = true;
 	/** Tint distant grass, leaves and water with Big Globe's own colour scripts instead of flat per-biome colours. */
 	public boolean bigGlobeColors = true;
+	/** With Xaero's World Map: also map the terrain of the whole LOD radius, not just the chunks the player has loaded. */
+	public boolean xaeroLodMap = true;
+	/** Radius of that map in chunks; 0 follows Distant Horizons' render distance. */
+	public int xaeroLodMapRadius = 0;
 	/** Override priority used when registering with Distant Horizons. Must differ from every other generator override. */
 	public int generatorPriority = 2026;
 	/** Log a throughput summary every this many generated sections (0 disables). */
@@ -89,11 +103,15 @@ public final class GlobeConfig {
 		this.undergroundMode = p.getProperty("undergroundMode", this.undergroundMode).trim().toLowerCase(Locale.ROOT);
 		this.sampleCellCenter = bool(p, "sampleCellCenter", this.sampleCellCenter);
 		this.trees = bool(p, "trees", this.trees);
+		this.groundCover = bool(p, "groundCover", this.groundCover);
+		this.updateParentSections = bool(p, "updateParentSections", this.updateParentSections);
 		this.clientGeneration = bool(p, "clientGeneration", this.clientGeneration);
 		this.clientGenerationWithDhServer = bool(p, "clientGenerationWithDhServer", this.clientGenerationWithDhServer);
 		this.clientThreads = integer(p, "clientThreads", this.clientThreads);
 		this.vertigoGuard = bool(p, "vertigoGuard", this.vertigoGuard);
 		this.bigGlobeColors = bool(p, "bigGlobeColors", this.bigGlobeColors);
+		this.xaeroLodMap = bool(p, "xaeroLodMap", this.xaeroLodMap);
+		this.xaeroLodMapRadius = integer(p, "xaeroLodMapRadius", this.xaeroLodMapRadius);
 		this.generatorPriority = integer(p, "generatorPriority", this.generatorPriority);
 		this.statsInterval = integer(p, "statsInterval", this.statsInterval);
 	}
@@ -103,6 +121,7 @@ public final class GlobeConfig {
 		this.clientThreads = Math.max(0, Math.min(64, this.clientThreads));
 		this.generatorPriority = Math.max(1, this.generatorPriority);
 		this.statsInterval = Math.max(0, this.statsInterval);
+		this.xaeroLodMapRadius = Math.max(0, Math.min(4096, this.xaeroLodMapRadius));
 		switch (this.undergroundMode) {
 			case "none", "fill", "carve", "decorate", "bigglobe" -> {}
 			default -> this.undergroundMode = "fill";
@@ -119,11 +138,15 @@ public final class GlobeConfig {
 			entry(w, "undergroundMode", this.undergroundMode, "none | fill | carve | decorate | bigglobe (use Big Globe's own Distant Horizons setting). fill is fastest and looks the same from above.");
 			entry(w, "sampleCellCenter", this.sampleCellCenter, "Sample the centre of each LOD cell instead of its corner.");
 			entry(w, "trees", this.trees, "Approximate tree canopies so forests remain visible in the distance.");
+			entry(w, "groundCover", this.groundCover, "Big Globe's grass, flowers, leaf litter and similar ground cover on generated LODs, so they match LODs of explored chunks.");
+			entry(w, "updateParentSections", this.updateParentSections, "Let generated sections rewrite their coarser parents too (Distant Horizons' default). Off avoids holes while LODs build.");
 			entry(w, "clientGeneration", this.clientGeneration, "Multiplayer: generate LODs on the client when the server has no Distant Horizons.");
 			entry(w, "clientGenerationWithDhServer", this.clientGenerationWithDhServer, "Multiplayer: generate locally even when the server runs Distant Horizons.");
 			entry(w, "clientThreads", this.clientThreads, "Client generation threads, 0 = automatic.");
 			entry(w, "vertigoGuard", this.vertigoGuard, "With Vertigo, ignore chunks whose terrain was cut off by vertical syncing.");
 			entry(w, "bigGlobeColors", this.bigGlobeColors, "Use Big Globe's grass, foliage and water colour scripts for LODs.");
+			entry(w, "xaeroLodMap", this.xaeroLodMap, "Xaero's World Map and Minimap: also map the surface of the whole LOD radius, from Big Globe's terrain scripts.");
+			entry(w, "xaeroLodMapRadius", this.xaeroLodMapRadius, "Radius of that map in chunks, 0 = Distant Horizons' render distance. Far parts use one map pixel per 2 to 64 blocks, like LODs.");
 			entry(w, "generatorPriority", this.generatorPriority, "Distant Horizons override priority. Higher than Big Globe's built-in generator (10).");
 			entry(w, "statsInterval", this.statsInterval, "Log a throughput summary every N sections, 0 = never.");
 		}
@@ -157,9 +180,12 @@ public final class GlobeConfig {
 		return "maxDetail=" + this.maxDetailLevel
 			+ ", underground=" + this.undergroundMode
 			+ ", trees=" + this.trees
+			+ ", groundCover=" + this.groundCover
+			+ ", parentUpdates=" + this.updateParentSections
 			+ ", cellCentre=" + this.sampleCellCenter
 			+ ", clientGeneration=" + this.clientGeneration
 			+ ", vertigoGuard=" + this.vertigoGuard
-			+ ", colours=" + this.bigGlobeColors;
+			+ ", colours=" + this.bigGlobeColors
+			+ ", xaeroLodMap=" + this.xaeroLodMap + (this.xaeroLodMap ? " (radius " + (this.xaeroLodMapRadius == 0 ? "DH" : this.xaeroLodMapRadius) + ")" : "");
 	}
 }

@@ -210,9 +210,10 @@ final class ClientSectionQueue {
 			long pos = task.pos;
 			byte sectionDetail = DhSectionPos.getDetailLevel(pos);
 			dataSource = FullDataSourceV2.createEmpty(pos);
-			// same propagation flags Distant Horizons' own world generation queue uses
+			// same propagation flags Distant Horizons' own world generation queue uses, except that generated
+			// sections do not rewrite their parents (see SectionFlags: that is what leaves holes while LODs build)
 			dataSource.applyToChildren = sectionDetail > DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL;
-			dataSource.applyToParent = sectionDetail < DhSectionPos.SECTION_REGION_DETAIL_LEVEL;
+			dataSource.applyToParent = GlobeConfig.get().updateParentSections && sectionDetail < DhSectionPos.SECTION_REGION_DETAIL_LEVEL;
 			this.generator.generateNow(
 				DhSectionPos.getMinCornerBlockX(pos),
 				DhSectionPos.getMinCornerBlockZ(pos),

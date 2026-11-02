@@ -10,7 +10,10 @@
 		"RemoteWorldRetrievalQueueMixin",
 		"NetworkRequestQueueMixin",
 		"SharedApiMixin",
-		"ClientBlockStateColorCacheMixin"
+		"ClientBlockStateColorCacheMixin",
+		"XaeroMapWriterMixin",
+		"XaeroMinimapWriterMixin",
+		"XaeroLodTileMixin"
 	],
 	"injectors": {
 		"defaultRequire": 0

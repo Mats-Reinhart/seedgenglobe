@@ -31,6 +31,7 @@ import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.dh.GlobeWorldGenerator;
 import dev.seedgenglobe.terrain.GlobeTerrain;
+import dev.seedgenglobe.terrain.GroundCover;
 
 /**
  * Multiplayer support: generates LODs on the client from the terrain Big Globe syncs to players.
@@ -130,7 +131,11 @@ public final class ClientGeneration {
 			}
 			return;
 		}
-		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name);
+		// Big Globe does not sync its configured features, so clients get every decorator except flower patches.
+		GroundCover.Shared ground = GlobeConfig.get().groundCover && state.dimension.equals(Level.OVERWORLD)
+			? GroundCover.Shared.create(terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), terrain.worldInfo.seed(), null)
+			: null;
+		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name, ground);
 		state.queue = new ClientSectionQueue(generator);
 		state.generator = generator;
 		SeedGenGlobe.LOGGER.info("SeedGenGlobe now generates Distant Horizons LODs on this client for {} ({}).", name, terrain);
@@ -143,6 +148,12 @@ public final class ClientGeneration {
 		catch (RuntimeException exception) {
 			return null;
 		}
+	}
+
+	/** This client's own generator for a level (multiplayer client generation), or null. */
+	public static @Nullable GlobeWorldGenerator generatorFor(ClientLevel level) {
+		LevelState state = STATES.get(level);
+		return state != null ? state.generator : null;
 	}
 
 	static @Nullable LevelState stateFor(@Nullable DhClientLevel level) {

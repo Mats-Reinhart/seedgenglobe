@@ -58,6 +58,7 @@ final class ClientStatusCommand {
 		else if (!GlobeColors.enabled()) colours = "off after an error (see the log)";
 		else colours = "on";
 		lines.add("Big Globe colours for LODs: " + colours);
+		lines.addAll(SeedGenGlobeClient.xaeroStatus());
 		lines.addAll(GlobeMixinPlugin.problems());
 		return lines;
 	}

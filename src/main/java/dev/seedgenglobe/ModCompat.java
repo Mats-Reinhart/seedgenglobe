@@ -24,6 +24,8 @@ public final class ModCompat {
 	public static final boolean SCALABLELUX = loaded("scalablelux");
 	public static final boolean SEEDGEN = loaded("seedrenderer");
 	public static final boolean VOXY = loaded("voxy");
+	public static final boolean XAERO_WORLD_MAP = loaded("xaeroworldmap");
+	public static final boolean XAERO_MINIMAP = loaded("xaerominimap") || loaded("xaerobetterpvp");
 
 	private ModCompat() {}
 
@@ -60,6 +62,9 @@ public final class ModCompat {
 		if (IRIS) lines.add("Iris: LODs carry real block states and biomes, so shader packs see correct DH materials (leaves, water, snow).");
 		if (SEEDGEN) lines.add("Distant Horizons SeedGen: it stands down for Big Globe dimensions, SeedGenGlobe takes them; its queue tuning still applies.");
 		if (VOXY) lines.add("Voxy: not supported by SeedGenGlobe; Voxy keeps its own pipeline.");
+		if (XAERO_WORLD_MAP) lines.add("Xaero's World Map " + version("xaeroworldmap") + ": gets the LOD surface map of the whole Distant Horizons radius (xaeroLodMap), with Big Globe biomes; the minimap shows it too.");
+		if (XAERO_MINIMAP && !XAERO_WORLD_MAP) lines.add("Xaero's Minimap " + version("xaerominimap") + ": install Xaero's World Map as well for the LOD surface map.");
+		if ((XAERO_WORLD_MAP || XAERO_MINIMAP) && VERTIGO) lines.add("Xaero + Vertigo: chunks whose surface Vertigo has not synced are not mapped, so they no longer show up as black, empty chunks.");
 		return lines;
 	}
 
