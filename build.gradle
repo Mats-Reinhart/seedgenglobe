@@ -1,0 +1,105 @@
+plugins {
+	// Minecraft 26.1 ships unobfuscated, so this is Loom's non-remapping plugin (no mappings line, plain implementation deps).
+	id 'net.fabricmc.fabric-loom' version '1.18-SNAPSHOT'
+}
+
+version = "${project.mod_version}+mc${project.minecraft_version}"
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+// Distant Horizons, Big Globe and Vertigo are compiled against local jars in libs/ (see libs/README.txt).
+// Players install those mods themselves; nothing from them ends up in SeedGenGlobe's jar.
+def localMods = fileTree('libs') { include '*.jar' }
+// Big Globe keeps a library that its public classes refer to (autocodec) inside its own jar.
+def nestedLibraries = files(provider {
+	localMods.files.collectMany { jar ->
+		zipTree(jar).matching {
+			include 'META-INF/jars/*.jar'
+			exclude 'META-INF/jars/fabric-*' // Fabric API modules bundled by Distant Horizons; fabric-api below provides them
+		}.files
+	}
+})
+
+sourceSets {
+	main {
+		// compile-time copy of Vertigo's small public API, so Vertigo itself is optional for building (excluded from the jar)
+		java.srcDir 'src/vertigoStubs/java'
+	}
+	// ColumnProfile's logic tests run without Minecraft, against small fakes of the classes it uses
+	columnTest {
+		java.srcDir 'src/testFakes/java'
+		java.srcDir layout.buildDirectory.dir('generated/columnTest')
+	}
+}
+
+def copyColumnProfile = tasks.register('copyColumnProfileForTest', Copy) {
+	from('src/main/java') { include 'dev/seedgenglobe/terrain/ColumnProfile.java' }
+	into layout.buildDirectory.dir('generated/columnTest')
+}
+tasks.named('compileColumnTestJava') { dependsOn copyColumnProfile }
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+	compileOnly localMods
+	compileOnly nestedLibraries
+	compileOnly 'org.jetbrains:annotations:26.0.2'
+
+	testCompileOnly localMods
+	testRuntimeOnly localMods
+	testRuntimeOnly nestedLibraries
+
+	columnTestCompileOnly 'org.jetbrains:annotations:26.0.2'
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.encoding = 'UTF-8'
+	it.options.release = 25
+}
+
+processResources {
+	inputs.property 'version', project.version
+	filesMatching('fabric.mod.json') {
+		expand 'version': project.version
+	}
+}
+
+jar {
+	exclude 'builderb0y/**' // the Vertigo API stubs
+	from('LICENSE') {
+		rename { "${it}_${project.archives_base_name}" }
+	}
+}
+
+sourcesJar {
+	exclude 'builderb0y/**'
+}
+
+def columnProfileTest = tasks.register('columnProfileTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks ColumnProfile against the data point rules of Distant Horizons and the light model of Big Globe.'
+	classpath = sourceSets.columnTest.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.terrain.ColumnProfileTest'
+}
+
+def canopyMathTest = tasks.register('canopyMathTest', JavaExec) {
+	group = 'verification'
+	description = 'Sanity checks for the tree canopy shape functions.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.terrain.CanopyMathTest'
+}
+
+tasks.named('check') {
+	dependsOn columnProfileTest, canopyMathTest
+}

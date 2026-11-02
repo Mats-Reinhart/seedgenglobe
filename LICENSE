@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Mats Reinhart
+Copyright (c) 2026 SeedGenGlobe contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---------------------------------------------------------------------------------
+Third-party software
+
+SeedGenGlobe contains no code from the mods it works with. At runtime it calls into:
+  - Big Globe by Builderb0y (All Rights Reserved; see its own license). Big Globe is
+    not included and must be installed separately from its official download pages.
+  - Distant Horizons (LGPL-3.0), through its public API and a few optional mixins.
+  - Vertigo by Builderb0y (MIT), through its public API, when installed.
+The files in src/vertigoStubs only restate Vertigo's public method signatures so
+SeedGenGlobe can be compiled without Vertigo; they are not part of the built jar.
