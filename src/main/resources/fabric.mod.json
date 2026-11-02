@@ -3,7 +3,7 @@
 	"id": "seedgenglobe",
 	"version": "${version}",
 	"name": "SeedGenGlobe",
-	"description": "Seed-based Distant Horizons generator for Big Globe. Computes LODs directly from Big Globe's terrain scripts at whatever detail Distant Horizons asks for, instead of generating every distant chunk. Also generates LODs on multiplayer clients from the terrain Big Globe syncs, protects LODs and Xaero's maps from Vertigo's partial chunks, uses Big Globe's colours and ground cover, and maps the whole LOD radius in Xaero's World Map and Minimap.",
+	"description": "Seed-based Distant Horizons generator for Big Globe. Computes LODs directly from Big Globe's terrain scripts, structures included, at whatever detail Distant Horizons asks for, instead of generating every distant chunk. Also generates LODs on multiplayer clients from the terrain Big Globe syncs, protects LODs and Xaero's maps from Vertigo's partial chunks, uses Big Globe's colours and ground cover, and draws the LOD terrain into Xaero's World Map and Minimap as it is generated.",
 	"authors": [
 		"SeedGenGlobe contributors"
 	],

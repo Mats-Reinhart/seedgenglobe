@@ -157,6 +157,96 @@ public final class ColumnProfile implements BlockSegmentList.SegmentConsumer {
 		return -1;
 	}
 
+	/** The block at y, or null outside the column. */
+	public @Nullable BlockState stateAt(int y) {
+		int run = this.runAt(y);
+		return run >= 0 ? this.states[run] : null;
+	}
+
+	/**
+	 * Replaces parts of the column with the given runs (top-down, not overlapping, tops exclusive), the way blocks a
+	 * structure placed replace terrain. Parts outside the column are dropped. Light is left at 0: call
+	 * {@link #relight} afterwards.
+	 */
+	public void replaceRuns(int writeCount, BlockState[] writeStates, int[] writeBottoms, int[] writeTops) {
+		if (writeCount <= 0 || this.count == 0) return;
+		int oldCount = this.count;
+		BlockState[] oldStates = Arrays.copyOf(this.states, oldCount);
+		int[] oldBottoms = Arrays.copyOf(this.bottoms, oldCount);
+		int[] oldTops = Arrays.copyOf(this.tops, oldCount);
+		this.count = 0;
+		int write = 0;
+		for (int run = 0; run < oldCount; run++) {
+			int runBottom = oldBottoms[run];
+			int cursor = oldTops[run];
+			while (cursor > runBottom) {
+				while (write < writeCount && writeBottoms[write] >= cursor) write++; // entirely above what is left
+				if (write < writeCount && writeTops[write] > runBottom) {
+					int top = Math.min(writeTops[write], cursor);
+					int bottom = Math.max(writeBottoms[write], runBottom);
+					if (top < cursor) this.add(oldStates[run], top, cursor, 0, 0);
+					this.add(writeStates[write], bottom, top, 0, 0);
+					cursor = bottom;
+				}
+				else {
+					this.add(oldStates[run], runBottom, cursor, 0, 0);
+					cursor = runBottom;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Recomputes light straight down from the top of the column, like sky light falling into a column of blocks:
+	 * blocks that let sky light through keep it, others take away their light dampening per block (at least 1).
+	 * Block light is each run's own emission.
+	 */
+	public void relight(int topSkyLight) {
+		int light = topSkyLight;
+		for (int run = 0; run < this.count; run++) {
+			BlockState state = this.states[run];
+			this.skyLight[run] = (byte)(light);
+			this.blockLight[run] = (byte)(clampLight(state.getLightEmission()));
+			if (light > 0 && !state.propagatesSkylightDown()) {
+				int dampening = Math.max(1, state.getLightDampening());
+				long left = light - (long)(dampening) * (this.tops[run] - this.bottoms[run]);
+				light = left <= 0L ? 0 : (int)(left);
+			}
+		}
+		// equal neighbours may have become mergeable
+		int out = 0;
+		for (int run = 0; run < this.count; run++) {
+			if (out > 0 && this.states[out - 1] == this.states[run] && this.skyLight[out - 1] == this.skyLight[run] && this.blockLight[out - 1] == this.blockLight[run]) {
+				this.bottoms[out - 1] = this.bottoms[run];
+				continue;
+			}
+			if (out != run) {
+				this.states[out] = this.states[run];
+				this.bottoms[out] = this.bottoms[run];
+				this.tops[out] = this.tops[run];
+				this.skyLight[out] = this.skyLight[run];
+				this.blockLight[out] = this.blockLight[run];
+			}
+			out++;
+		}
+		for (int run = out; run < this.count; run++) this.states[run] = null;
+		this.count = out;
+	}
+
+	/** Makes this profile an exact copy of another one. */
+	public void copyFrom(ColumnProfile other) {
+		this.ensureCapacity(other.count);
+		this.count = other.count;
+		System.arraycopy(other.states, 0, this.states, 0, other.count);
+		System.arraycopy(other.bottoms, 0, this.bottoms, 0, other.count);
+		System.arraycopy(other.tops, 0, this.tops, 0, other.count);
+		System.arraycopy(other.skyLight, 0, this.skyLight, 0, other.count);
+		System.arraycopy(other.blockLight, 0, this.blockLight, 0, other.count);
+		this.surfaceTop = other.surfaceTop;
+		this.surfaceRun = other.surfaceRun;
+		this.biome = other.biome;
+	}
+
 	/**
 	 * Replaces [bottom, top) with the given state, splitting existing runs as needed, and updates the surface.
 	 * Used to lay tree canopies over the terrain. The range is clipped to the column.

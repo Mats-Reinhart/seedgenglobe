@@ -11,6 +11,8 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 
+import org.jetbrains.annotations.Nullable;
+
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -64,6 +66,15 @@ public final class GlobeCommands {
 			LiteralArgumentBuilder.<CommandSourceStack>literal("probe")
 			.requires(GlobeCommands::isGamemaster)
 			.executes(GlobeCommands::probe)
+		);
+		root.then(
+			LiteralArgumentBuilder.<CommandSourceStack>literal("structures")
+			.requires(GlobeCommands::isGamemaster)
+			.executes(context -> structures(context, 64))
+			.then(
+				RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("radiusChunks", IntegerArgumentType.integer(1, 4096))
+				.executes(context -> structures(context, IntegerArgumentType.getInteger(context, "radiusChunks")))
+			)
 		);
 		dispatcher.register(root);
 	}
@@ -184,6 +195,43 @@ public final class GlobeCommands {
 		return 1;
 	}
 
+	/**
+	 * The structures SeedGenGlobe puts into LODs around the player. Up to 128 chunks away every structure is listed,
+	 * up to 512 chunks the large ones (lakes, mega trees), farther out only the giant ones (obelisks), like far LODs
+	 * get them, which keeps a wide search quick.
+	 */
+	static int structures(CommandContext<CommandSourceStack> context, int radiusChunks) {
+		CommandSourceStack source = context.getSource();
+		DhAccess.Probe probe = DhAccess.probeFor(source.getLevel());
+		if (probe == null) {
+			fail(source, "SeedGenGlobe is not generating this dimension.");
+			return 0;
+		}
+		if (probe.structureDetail() < 0) {
+			fail(source, "SeedGenGlobe puts no structures into this dimension's LODs (turned off in its config, or for this world).");
+			return 0;
+		}
+		Vec3 position = source.getPosition();
+		int x = (int)(Math.floor(position.x)), z = (int)(Math.floor(position.z));
+		int tier = radiusChunks <= 128 ? 0 : (radiusChunks <= 512 ? 1 : 2);
+		MinecraftServer server = source.getServer();
+		say(source, "SeedGenGlobe: looking for " + (tier == 0 ? "structures" : (tier == 1 ? "large structures" : "giant structures")) + " within " + radiusChunks + " chunks...");
+		CompletableFuture.runAsync(() -> {
+			List<String> lines = probe.structures(x, z, radiusChunks << 4, tier, 20);
+			server.execute(() -> {
+				if (lines == null || lines.isEmpty()) {
+					say(source, "None found.");
+					return;
+				}
+				for (String line : lines) say(source, "- " + line);
+			});
+		}).exceptionally(throwable -> {
+			server.execute(() -> fail(source, "SeedGenGlobe structure search failed: " + throwable));
+			return null;
+		});
+		return 1;
+	}
+
 	static int benchmark(CommandContext<CommandSourceStack> context, int sections, int detail) {
 		CommandSourceStack source = context.getSource();
 		DhAccess.Probe probe = DhAccess.probeFor(source.getLevel());
@@ -221,6 +269,12 @@ public final class GlobeCommands {
 			ColumnProfile column(int x, int z);
 
 			String benchmark(int x, int z, int sections, int detail);
+
+			/** @return null when this dimension's LODs get no structures */
+			@Nullable List<String> structures(int x, int z, int radius, int tier, int limit);
+
+			/** @return the coarsest detail level with every structure, or -1 without structures */
+			int structureDetail();
 		}
 
 		static List<String> statusLines() {

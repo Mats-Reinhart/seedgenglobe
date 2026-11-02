@@ -23,6 +23,9 @@ public class BlockState {
 
 	public boolean isAir() { return this.air; }
 	public int getLightEmission() { return this.light; }
+	public int getLightDampening() { return this.opacity; }
+	/** Like vanilla: blocks that block no light and hold no fluid let sky light straight down. */
+	public boolean propagatesSkylightDown() { return this.opacity == 0 && !this.fluid; }
 	public FluidState getFluidState() { return new FluidState(!this.fluid, this.fluidBlock != null ? this.fluidBlock : this); }
 	public Block getBlock() { return this.block; }
 	@Override public String toString() { return this.name; }

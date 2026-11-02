@@ -845,8 +845,8 @@ public final class GroundCover {
 	}
 
 	/**
-	 * Puts the decided ground cover on the section's columns, after tree canopies were laid.
-	 * A decoration only goes where the blocks above the ground are still air.
+	 * Puts the decided ground cover on the section's columns, after structures and tree canopies were laid.
+	 * A decoration only goes where no structure covers the column and the blocks above the ground are still air.
 	 */
 	void apply() {
 		List<Decoration> table = this.shared.table;
@@ -854,6 +854,8 @@ public final class GroundCover {
 			int choice = this.decision[index];
 			if (choice == 0) continue;
 			Decoration decoration = table.get(choice);
+			// structures were placed first, as in Big Globe; nothing grows on what they built
+			if (this.sampler.occupied(index / SectionSampler.WIDTH, index % SectionSampler.WIDTH)) continue;
 			ColumnProfile profile = this.sampler.profile(index / SectionSampler.WIDTH, index % SectionSampler.WIDTH);
 			int y = this.groundTop[index];
 			int height = decoration.upper != null ? 2 : 1;
