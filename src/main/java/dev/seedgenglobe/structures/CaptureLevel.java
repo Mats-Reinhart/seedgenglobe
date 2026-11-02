@@ -21,6 +21,8 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ProtoChunk;
@@ -37,8 +39,10 @@ import dev.seedgenglobe.SeedGenGlobe;
  * <p>
  * Minecraft calls structure pieces with such a region, so they only use what a region offers: blocks, heightmaps,
  * biomes, the level's registries and settings, and the occasional entity, block entity or block tick. Entities are
- * dropped, block entities do not exist and ticks never run, none of which a LOD can show. Nothing here touches the
- * real level's chunks, so pieces can be placed on any thread without loading anything.
+ * dropped and ticks never run, neither of which a LOD can show. Block entities exist for as long as the section is
+ * placed, because pieces fill chests and Big Globe marks blocks for later generation through them (and logs a
+ * warning when one is missing); they are thrown away with the section. Nothing here touches the real level's
+ * chunks, so pieces can be placed on any thread without loading anything.
  * <p>
  * A proxy instead of a class because WorldGenLevel and the interfaces it extends have well over a hundred methods,
  * most of them irrelevant here; those keep their default implementation or answer "nothing".
@@ -51,6 +55,13 @@ final class CaptureLevel implements InvocationHandler {
 	final CaptureView view;
 	private final WorldGenLevel world;
 	private final Map<Long, ChunkAccess> chunks = new HashMap<>();
+	private final Map<Long, BlockEntity> blockEntities = new HashMap<>();
+	/**
+	 * Blocks with a block entity that pieces placed, whether or not the section keeps that column. At coarse detail
+	 * most columns are dropped, so reading the block back gave nothing, and Big Globe's scripts that fill a chest or
+	 * set up delayed generation right after placing it logged "Expected ChestBlockEntity ... but got null".
+	 */
+	private final Map<Long, BlockState> placedEntityBlocks = new HashMap<>();
 	private RandomSource random;
 
 	CaptureLevel(LodStructures owner, CaptureView view) {
@@ -67,10 +78,43 @@ final class CaptureLevel implements InvocationHandler {
 	void begin(long seed) {
 		this.random = new MojangPermuter(seed);
 		this.chunks.clear();
+		this.blockEntities.clear();
+		this.placedEntityBlocks.clear();
 	}
 
 	void end() {
 		this.chunks.clear();
+		this.blockEntities.clear();
+		this.placedEntityBlocks.clear();
+	}
+
+	/**
+	 * The block entity of the block a piece placed here, made when first asked for and kept while the section is
+	 * placed (so a chest a piece fills is the chest it reads back), or null when the block has none.
+	 */
+	@Nullable BlockEntity blockEntity(BlockPos pos) {
+		long key = pos.asLong();
+		BlockState state = this.state(pos);
+		if (!state.hasBlockEntity()) {
+			BlockState placed = this.placedEntityBlocks.get(key);
+			if (placed != null) state = placed;
+		}
+		BlockEntity existing = this.blockEntities.get(key);
+		if (existing != null && existing.getBlockState().getBlock() == state.getBlock()) return existing;
+		if (!state.hasBlockEntity() || !(state.getBlock() instanceof EntityBlock block)) {
+			if (existing != null) this.blockEntities.remove(key);
+			return null;
+		}
+		BlockEntity created;
+		try {
+			created = block.newBlockEntity(pos.immutable(), state);
+		}
+		catch (RuntimeException exception) {
+			created = null;
+		}
+		if (created != null) this.blockEntities.put(key, created);
+		else this.blockEntities.remove(key);
+		return created;
 	}
 
 	/** A throwaway chunk for pieces that mark blocks for post-processing; what is written to it is ignored. */
@@ -91,7 +135,10 @@ final class CaptureLevel implements InvocationHandler {
 
 	private void write(Object pos, Object state) {
 		BlockPos blockPos = (BlockPos)(pos);
-		this.view.write(blockPos.getX(), blockPos.getY(), blockPos.getZ(), (BlockState)(state));
+		BlockState blockState = (BlockState)(state);
+		this.view.write(blockPos.getX(), blockPos.getY(), blockPos.getZ(), blockState);
+		if (blockState.hasBlockEntity()) this.placedEntityBlocks.put(blockPos.asLong(), blockState);
+		else if (!this.placedEntityBlocks.isEmpty()) this.placedEntityBlocks.remove(blockPos.asLong());
 	}
 
 	private Holder<Biome> biome(int quartX, int quartY, int quartZ) {
@@ -133,6 +180,12 @@ final class CaptureLevel implements InvocationHandler {
 				}
 				break;
 			case "getBlockEntity":
+				if (count >= 1 && args[0] instanceof BlockPos pos) {
+					BlockEntity entity = this.blockEntity(pos);
+					if (count == 1) return entity;
+					// getBlockEntity(pos, type): only an entity of that type
+					return entity != null && entity.getType() == args[1] ? Optional.of(entity) : Optional.empty();
+				}
 				return count == 1 ? null : Optional.empty();
 			case "getHeight":
 				if (count == 0) return this.view.levelMaxY - this.view.levelMinY;

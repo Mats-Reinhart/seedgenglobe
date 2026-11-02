@@ -29,7 +29,15 @@ import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.terrain.ColumnProfile;
 
 /**
- * {@code /seedgenglobe} - status, verification against real chunks, and a generation benchmark.
+ * {@code /seedgenglobe debug ...}: tools for finding out what SeedGenGlobe does, for operators. Everything a player
+ * needs day to day (settings, progress, status) is in the config screen (Mod Menu) and the progress overlay.
+ * <ul>
+ * <li>{@code status}: what every generator, the scheduler and Distant Horizons' queues are doing;</li>
+ * <li>{@code verify [radiusChunks]}: predicted surface heights against the real chunks around you;</li>
+ * <li>{@code benchmark [sections] [detail]}: time sections on one background thread;</li>
+ * <li>{@code probe}: the column under you as SeedGenGlobe computes it;</li>
+ * <li>{@code structures [radiusChunks]}: the structures LODs get around you.</li>
+ * </ul>
  * Distant Horizons classes are only touched through {@link DhAccess}, so the command also loads without DH.
  */
 public final class GlobeCommands {
@@ -37,21 +45,18 @@ public final class GlobeCommands {
 	private GlobeCommands() {}
 
 	public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-		LiteralArgumentBuilder<CommandSourceStack> root = LiteralArgumentBuilder.literal("seedgenglobe");
-		root.executes(GlobeCommands::status);
-		root.then(LiteralArgumentBuilder.<CommandSourceStack>literal("status").executes(GlobeCommands::status));
-		root.then(
+		LiteralArgumentBuilder<CommandSourceStack> debug = LiteralArgumentBuilder.literal("debug");
+		debug.then(LiteralArgumentBuilder.<CommandSourceStack>literal("status").executes(GlobeCommands::status));
+		debug.then(
 			LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
-			.requires(GlobeCommands::isGamemaster)
 			.executes(context -> verify(context, 8))
 			.then(
 				RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("radiusChunks", IntegerArgumentType.integer(1, 32))
 				.executes(context -> verify(context, IntegerArgumentType.getInteger(context, "radiusChunks")))
 			)
 		);
-		root.then(
+		debug.then(
 			LiteralArgumentBuilder.<CommandSourceStack>literal("benchmark")
-			.requires(GlobeCommands::isGamemaster)
 			.executes(context -> benchmark(context, 16, -1))
 			.then(
 				RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("sections", IntegerArgumentType.integer(1, 512))
@@ -62,20 +67,17 @@ public final class GlobeCommands {
 				)
 			)
 		);
-		root.then(
-			LiteralArgumentBuilder.<CommandSourceStack>literal("probe")
-			.requires(GlobeCommands::isGamemaster)
-			.executes(GlobeCommands::probe)
-		);
-		root.then(
+		debug.then(LiteralArgumentBuilder.<CommandSourceStack>literal("probe").executes(GlobeCommands::probe));
+		debug.then(
 			LiteralArgumentBuilder.<CommandSourceStack>literal("structures")
-			.requires(GlobeCommands::isGamemaster)
 			.executes(context -> structures(context, 64))
 			.then(
 				RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("radiusChunks", IntegerArgumentType.integer(1, 4096))
 				.executes(context -> structures(context, IntegerArgumentType.getInteger(context, "radiusChunks")))
 			)
 		);
+		LiteralArgumentBuilder<CommandSourceStack> root = LiteralArgumentBuilder.<CommandSourceStack>literal("seedgenglobe").requires(GlobeCommands::isGamemaster);
+		root.then(debug);
 		dispatcher.register(root);
 	}
 
@@ -95,6 +97,7 @@ public final class GlobeCommands {
 		CommandSourceStack source = context.getSource();
 		GlobeConfig config = GlobeConfig.get();
 		say(source, "SeedGenGlobe " + ModCompat.version(SeedGenGlobe.MOD_ID) + (config.enabled ? "" : " (disabled)") + ": " + config.summary());
+		say(source, "Threads: " + dev.seedgenglobe.gen.SectionScheduler.get().describe());
 		if (!ModCompat.DISTANT_HORIZONS) {
 			say(source, "Distant Horizons is not installed on this side.");
 		}

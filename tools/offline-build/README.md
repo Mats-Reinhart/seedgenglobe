@@ -42,3 +42,9 @@ the structure guard injects into that no other mod calls (all `require = 0`, so 
 leaves that one injection out; the one a swamp hut's cat uses, `getStructureWithPieceAt(BlockPos, TagKey)`, is
 verified). `GlobeMixinPlugin`'s requirement checks also pass for every Distant Horizons and Xaero mixin against
 those jars.
+
+Since 1.3.1 the link check also follows members a class inherits (javac writes `this.getY()` in a subclass of a
+Minecraft widget as a reference to the subclass) up to the first class outside the jar that defines the subclass, in
+SeedGenGlobe and in the scanned mods alike, so a member SeedGenGlobe's settings list or sliders inherit from Minecraft
+is verified when another mod's subclass uses it the same way. For 1.3.1, with the Vertigo jar passed as well: 1709 resolved
+(59 of them inherited through SeedGenGlobe's own subclasses), the same 14 unverified as 1.3.0, 0 errors. `tools/SettingsTable.java` prints the README's settings tables from the option list.

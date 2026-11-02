@@ -5,7 +5,7 @@
 # Mojang's brigadier (compiled from source) and generated compile-only stubs for Minecraft classes.
 set -euo pipefail
 
-VERSION="${VERSION:-1.3.0+mc26.1.2}"
+VERSION="${VERSION:-1.3.1+mc26.1.2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-/home/claude/work}"
 JAVAC="${JAVAC:-/usr/lib/jvm/java-25-openjdk-amd64/bin/javac}"

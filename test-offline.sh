@@ -12,7 +12,9 @@
 #     cells, snapshots, per-tile detail, coverage), against a block-by-block model, on the same fakes.
 #  8. SchedulerTest: the section scheduler (nearest first, following the player, weights, aging, cancelling, stopping
 #     part-way), the CPU and memory presets and the progress counters, on the real compiled classes.
-#  9. ConfigTest: the settings file (round trip of every option, broken values, clamping, 1.2.0 files).
+#  9. ConfigTest: the settings file (round trip of every option, broken values, clamping, 1.2.0 files), the config
+#     screen's values per setting (sliders, steps, arrow keys) and progress distances in chunks or blocks.
+# 10. StructureSizeTest: the detail levels small structure sets stop at.
 # Run build-offline.sh first.
 set -euo pipefail
 
@@ -55,10 +57,12 @@ mkdir -p "$OUT/support"
 	"$HERE/src/test/java/dev/seedgenglobe/terrain/GroundCoverTest.java" \
 	"$HERE/src/test/java/dev/seedgenglobe/xaero/LodMapGeometryTest.java" \
 	"$HERE/src/test/java/dev/seedgenglobe/gen/SchedulerTest.java" \
-	"$HERE/src/test/java/dev/seedgenglobe/config/ConfigTest.java"
+	"$HERE/src/test/java/dev/seedgenglobe/config/ConfigTest.java" \
+	"$HERE/src/test/java/dev/seedgenglobe/structures/StructureSizeTest.java"
 RUN="$OUT/support:$OUT/real:$CP"
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.terrain.CanopyMathTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.terrain.GroundCoverTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.xaero.LodMapGeometryTest
 "$JDK/bin/java" -ea -Dseedgenglobe.test.quiet=true -cp "$RUN" dev.seedgenglobe.gen.SchedulerTest
 "$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.config.ConfigTest
+"$JDK/bin/java" -ea -cp "$RUN" dev.seedgenglobe.structures.StructureSizeTest

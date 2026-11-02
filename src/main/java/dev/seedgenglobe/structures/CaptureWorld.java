@@ -66,7 +66,7 @@ final class CaptureWorld implements WorldOrChunk {
 
 	@Override
 	public @Nullable BlockEntity getBlockEntity(BlockPos pos) {
-		return null;
+		return this.level.blockEntity(pos);
 	}
 
 	@Override

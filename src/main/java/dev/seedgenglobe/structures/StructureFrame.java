@@ -3,6 +3,8 @@ package dev.seedgenglobe.structures;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +75,8 @@ public final class StructureFrame {
 	private final List<Candidate> inside = new ArrayList<>();
 	private int originX, originZ, detail, span, levelMinY, levelMaxY, topSkyLight;
 	private boolean active;
+	/** Whether the section being generated is still wanted; checked between structures. */
+	private BooleanSupplier cancel = () -> false;
 
 	@SuppressWarnings("unchecked")
 	StructureFrame(LodStructures owner, SectionSampler sampler) {
@@ -92,7 +96,8 @@ public final class StructureFrame {
 	 *
 	 * @return whether there are any; if not, the other methods do nothing for this section
 	 */
-	public boolean begin(int originX, int originZ, int detail, int levelMinY, int levelMaxY, int topSkyLight) {
+	public boolean begin(int originX, int originZ, int detail, int levelMinY, int levelMaxY, int topSkyLight, BooleanSupplier cancel) {
+		this.cancel = cancel;
 		if (this.anyOccupied) {
 			Arrays.fill(this.occupied, false);
 			this.anyOccupied = false;
@@ -108,9 +113,13 @@ public final class StructureFrame {
 		this.topSkyLight = topSkyLight;
 		int maxX = originX + this.span - 1, maxZ = originZ + this.span - 1;
 		try {
-			this.nearby = this.owner.index.near(originX, originZ, maxX, maxZ, this.owner.tier(detail), true);
+			this.nearby = this.owner.index.near(originX, originZ, maxX, maxZ, detail, true, cancel);
+		}
+		catch (CancellationException cancelled) {
+			throw cancelled;
 		}
 		catch (RuntimeException | StackOverflowError | LinkageError error) {
+			this.stopIfCancelled();
 			this.owner.reportFailure("looking up structures near " + originX + ", " + originZ, error);
 		}
 		for (Candidate candidate : this.nearby) {
@@ -131,7 +140,7 @@ public final class StructureFrame {
 	/**
 	 * Applies the raw column value overriders of the structures near a quad of columns that was just positioned,
 	 * before its terrain is generated, the way Big Globe's chunk generator does for every chunk: first the values
-	 * any overrider may change are computed, then each overrider gets the structures whose bounding box comes
+	 * the overriders read are computed (see {@link LodStructures#precompute}), then each overrider gets the structures whose bounding box comes
 	 * within their own radius of the chunk. Overriders without such structures are skipped (Big Globe's would loop
 	 * over nothing), and quads without any are left alone, as Big Globe's own LOD generator leaves all columns.
 	 *
@@ -142,24 +151,32 @@ public final class StructureFrame {
 		int minX = x & ~15, minZ = z & ~15;
 		int maxX = ((x + step) & ~15) | 15, maxZ = ((z + step) & ~15) | 15;
 		boolean any = false;
+		long mask = 0L;
 		for (Candidate candidate : this.nearby) {
 			if (candidate.rawOverriders.length == 0) continue;
 			int radius = candidate.radius;
 			if (!candidate.box.intersects(minX - radius, minZ - radius, maxX + radius, maxZ + radius)) continue;
-			for (int index : candidate.rawOverriders) this.lists[index].add(candidate.start);
+			for (int index : candidate.rawOverriders) {
+				this.lists[index].add(candidate.start);
+				if (index < 64) mask |= 1L << index;
+			}
 			any = true;
 		}
 		if (!any) return;
 		long start = System.nanoTime();
 		try {
 			this.fillStructures();
-			quad.preComputeRaw(this.owner.overriders);
+			// what the overriders here read, as it is before any of them runs (all of Big Globe's raw overriders' inputs
+			// with fullStructurePrecompute, as in 1.3.0)
+			if (this.owner.filteredPrecompute()) this.owner.precompute(mask).apply(quad);
+			else quad.preComputeRaw(this.owner.overriders);
 			for (int index = 0; index < this.rawOverriders.length; index++) {
 				if (this.lists[index].isEmpty()) continue;
 				quad.override(((ColumnValueOverrider.Entry)(this.rawOverriders[index].value())).script, this.structures[index]);
 			}
 		}
 		catch (RuntimeException | StackOverflowError | LinkageError error) {
+			this.stopIfCancelled();
 			this.owner.reportFailure("applying structure overriders at " + x + ", " + z, error);
 		}
 		finally {
@@ -183,12 +200,22 @@ public final class StructureFrame {
 
 	// ------------------------------------------------------------------------------------------------- placement
 
-	/** Places the structures that reach into the section, once all its terrain columns are done. */
-	public void place() {
+	/** Throws a {@link CancellationException} when the section is no longer wanted. */
+	private void stopIfCancelled() {
+		if (this.cancel.getAsBoolean()) throw new CancellationException("SeedGenGlobe section no longer wanted");
+	}
+
+	/**
+	 * Places the structures that reach into the section, once all its terrain columns are done. While they are placed,
+	 * {@link CaptureGuard} keeps their questions about other structures from reaching the real level.
+	 */
+	public void place(BooleanSupplier cancel) {
+		this.cancel = cancel;
 		if (this.inside.isEmpty()) return;
 		long start = System.nanoTime();
 		this.view.begin(this.originX, this.originZ, this.detail, this.levelMinY, this.levelMaxY);
 		this.level.begin(Permuter.permute(this.owner.columnSeed ^ SEED_SALT, this.originX, this.originZ, this.detail));
+		CaptureGuard.enter();
 		try {
 			this.placeRaw();
 			this.placeFeatures();
@@ -199,6 +226,7 @@ public final class StructureFrame {
 			}
 		}
 		finally {
+			CaptureGuard.exit();
 			this.view.end();
 			this.level.end();
 			this.owner.placeNanos.addAndGet(System.nanoTime() - start);
@@ -254,6 +282,7 @@ public final class StructureFrame {
 		ScriptedColumnLookup.GLOBAL.run(parent, () -> {
 			for (Candidate candidate : this.inside) {
 				if (!candidate.raw) continue;
+				this.stopIfCancelled();
 				long structureSeed = BigGlobeScriptedChunkGenerator.getStructureSeed(this.owner.columnSeed, candidate.key, candidate.start);
 				List<StructurePiece> pieces = candidate.start.start().getPieces();
 				for (int pieceIndex = 0, pieceCount = pieces.size(); pieceIndex < pieceCount; pieceIndex++) {
@@ -299,6 +328,7 @@ public final class StructureFrame {
 				return true;
 			}
 			catch (RuntimeException | StackOverflowError | LinkageError error) {
+				this.stopIfCancelled();
 				this.owner.placementFailures.incrementAndGet();
 				this.owner.reportFailure("placing raw piece of " + candidate, error);
 				return false;
@@ -330,6 +360,7 @@ public final class StructureFrame {
 	private void placeFeatures(WorldGenLevel world) {
 		BigGlobeScriptedChunkGenerator generator = this.owner.generator;
 		for (Candidate candidate : this.inside) {
+			this.stopIfCancelled();
 			StructureStart start = candidate.start.start();
 			List<StructurePiece> pieces = start.getPieces();
 			if (pieces.isEmpty()) continue;
@@ -353,6 +384,7 @@ public final class StructureFrame {
 							return true;
 						}
 						catch (RuntimeException | StackOverflowError | LinkageError error) {
+							this.stopIfCancelled();
 							this.owner.placementFailures.incrementAndGet();
 							this.owner.reportFailure("placing piece " + piece.getClass().getSimpleName() + " of " + candidate, error);
 							return false;
@@ -366,6 +398,7 @@ public final class StructureFrame {
 						return true;
 					}
 					catch (RuntimeException | StackOverflowError | LinkageError error) {
+						this.stopIfCancelled();
 						this.owner.placementFailures.incrementAndGet();
 						this.owner.reportFailure("finishing " + candidate, error);
 						return false;

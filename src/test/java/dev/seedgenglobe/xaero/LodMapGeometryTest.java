@@ -27,6 +27,10 @@ public final class LodMapGeometryTest {
 		sections(1000, -700, -2, 1);
 		sections(-30000, 25000, -59, 49);
 		sections(100, 100, 40, 40);
+		fullDetail(0, 0, 512);
+		fullDetail(1000, -700, 512);
+		fullDetail(-3000, 2000, 1024);
+		explored();
 		tiles();
 		System.out.println("LodMapGeometryTest: " + checks + " checks, " + failures + " failures");
 		if (failures > 0) System.exit(1);
@@ -112,6 +116,52 @@ public final class LodMapGeometryTest {
 		expect(where + ": sections are aligned to their size", aligned);
 		expect(where + ": no section coarser than its center asks for", wanted);
 		expect(where + ": every block covered exactly once", once);
+	}
+
+	/**
+	 * With a full detail radius, every section that reaches into the radius is at detail 0, the sections still tile
+	 * each region exactly once, and farther out the scheme is Distant Horizons' own.
+	 */
+	static void fullDetail(int x, int z, int radius) {
+		LodMapBuilder.Scheme scheme = MEDIUM.withFullDetail(radius);
+		expect("wanted detail inside the radius is 0", scheme.wantedAt(radius - 1) == 0 && scheme.wantedAt(0) == 0);
+		expect("wanted detail outside follows DH", scheme.wantedAt(radius * 8.0D) == MEDIUM.detailAt(radius * 8.0D));
+		boolean fine = true, tiled = true;
+		int regions = 0;
+		for (int regionX = Math.floorDiv(x - radius, 512) - 1; regionX <= Math.floorDiv(x + radius, 512) + 1; regionX++) {
+			for (int regionZ = Math.floorDiv(z - radius, 512) - 1; regionZ <= Math.floorDiv(z + radius, 512) + 1; regionZ++) {
+				regions++;
+				java.util.List<int[]> sections = new java.util.ArrayList<>();
+				LodMapBuilder.sectionsOver(regionX, regionZ, x, z, scheme, sections);
+				int[] covered = new int[512 * 512];
+				int minX = regionX * 512, minZ = regionZ * 512;
+				for (int[] section : sections) {
+					int span = 64 << section[2];
+					if (LodMapBuilder.distanceToSquare(x, z, section[0], section[1], span) <= radius && section[2] != 0) fine = false;
+					for (int bx = Math.max(section[0], minX); bx < Math.min(section[0] + span, minX + 512); bx++) {
+						for (int bz = Math.max(section[1], minZ); bz < Math.min(section[1] + span, minZ + 512); bz++) {
+							covered[(bx - minX) * 512 + (bz - minZ)]++;
+						}
+					}
+				}
+				for (int count : covered) if (count != 1) tiled = false;
+			}
+		}
+		expect("full detail radius " + radius + " around " + x + " " + z + ": sections reaching into it are detail 0 (" + regions + " regions)", fine);
+		expect("full detail radius " + radius + " around " + x + " " + z + ": regions still tiled exactly once", tiled);
+	}
+
+	/** The squares next to explored tiles: a coarse or empty tile touching a real one, never a real tile itself. */
+	static void explored() {
+		byte[] kinds = new byte[32 * 32];
+		kinds[10 * 32 + 10] = 2; // one real tile
+		expect("a neighbour of a real tile touches it", XaeroLodWriter.touchesReal(kinds, 11, 11) && XaeroLodWriter.touchesReal(kinds, 9, 10));
+		expect("two tiles away does not", !XaeroLodWriter.touchesReal(kinds, 12, 10));
+		expect("the real tile itself has no real neighbour", !XaeroLodWriter.touchesReal(kinds, 10, 10));
+		kinds[0] = 2;
+		expect("edges of the region are handled", XaeroLodWriter.touchesReal(kinds, 1, 0) && XaeroLodWriter.touchesReal(kinds, 0, 1) && !XaeroLodWriter.touchesReal(kinds, 31, 31));
+		expect("section keys differ by detail", LodMapBuilder.sectionKey(0, 0, 0) != LodMapBuilder.sectionKey(0, 0, 1));
+		expect("section keys differ by position", LodMapBuilder.sectionKey(64, 0, 0) != LodMapBuilder.sectionKey(0, 64, 0) && LodMapBuilder.sectionKey(-64, 0, 0) != LodMapBuilder.sectionKey(64, 0, 0));
 	}
 
 	static void tiles() {

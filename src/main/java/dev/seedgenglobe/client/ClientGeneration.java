@@ -100,7 +100,7 @@ public final class ClientGeneration {
 		if (queue != null) queue.close();
 		GlobeWorldGenerator generator = state.generator;
 		if (generator != null) {
-			SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] closed: {}", generator.stats.name, generator.stats.summary());
+			SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] closed: {}", generator.progress.name, generator.progress.summary());
 			generator.close();
 		}
 		state.queue = null;
@@ -136,7 +136,8 @@ public final class ClientGeneration {
 			? GroundCover.Shared.create(terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), terrain.worldInfo.seed(), null)
 			: null;
 		// no structures: placing them needs the world seed, which a client never learns
-		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name, ground, null);
+		String dimensionId = state.dimension.identifier().toString();
+		GlobeWorldGenerator generator = new GlobeWorldGenerator(state.wrapper, terrain, dimensionId, true, state.wrapper.hasSkyLight(), state.wrapper.hasCeiling(), name, ground, null);
 		state.queue = new ClientSectionQueue(generator);
 		state.generator = generator;
 		SeedGenGlobe.LOGGER.info("SeedGenGlobe now generates Distant Horizons LODs on this client for {} ({}).", name, terrain);
@@ -149,6 +150,13 @@ public final class ClientGeneration {
 		catch (RuntimeException exception) {
 			return null;
 		}
+	}
+
+	/** Whether this client generates LODs for the level itself (multiplayer client generation). */
+	public static boolean generates(Level level) {
+		if (!(level instanceof ClientLevel clientLevel)) return false;
+		LevelState state = STATES.get(clientLevel);
+		return state != null && state.generator != null && !state.generator.isClosed();
 	}
 
 	/** This client's own generator for a level (multiplayer client generation), or null. */
@@ -239,14 +247,14 @@ public final class ClientGeneration {
 			if (generator != null) {
 				generating = true;
 				ClientSectionQueue queue = state.queue;
-				lines.add(generator.stats.name + ": " + generator.stats.summary() + (queue != null ? ", queue " + queue.waitingCount() + " waiting / " + queue.runningCount() + " running" : ""));
+				lines.add(generator.progress.name + ": " + generator.progress.summary() + (queue != null ? ", Distant Horizons' requests: " + queue.waitingCount() + " waiting / " + queue.runningCount() + " running" : ""));
 			}
 			else {
 				lines.add(state.dimension.identifier() + " (client): waiting for Big Globe to sync terrain layers from the server");
 			}
 		}
 		if (generating) {
-			lines.add("Sections run on " + dev.seedgenglobe.dh.GeneratorThreads.describe() + ".");
+			lines.add("Sections run on " + dev.seedgenglobe.gen.SectionScheduler.get().describe() + ".");
 		}
 		return lines;
 	}

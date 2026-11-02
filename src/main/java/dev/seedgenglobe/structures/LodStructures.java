@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -29,8 +30,14 @@ import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureSet.StructureSelectionEntry;
 
 import builderb0y.bigglobe.chunkgen.BigGlobeScriptedChunkGenerator;
+import builderb0y.bigglobe.chunkgen.QuadHolder.QuadColumn;
+import builderb0y.bigglobe.columns.ScriptedColumn;
 import builderb0y.bigglobe.columns.ScriptedColumn.ColumnUsage;
+import builderb0y.bigglobe.columns.ScriptedColumn.ColumnValueInfo;
+import builderb0y.bigglobe.columns.traits.WorldTraits.WorldTraitInfo;
+import builderb0y.bigglobe.overriders.ColumnValueOverrider;
 import builderb0y.bigglobe.overriders.Overrider.SortedOverriders;
+import builderb0y.bigglobe.overriders.Overrider.SortedOverriders.FilteredSortingDependencyAnalyzer;
 import builderb0y.bigglobe.structures.DelegatingStructure;
 import builderb0y.bigglobe.structures.SizedStructure;
 import builderb0y.bigglobe.structures.management.SmartStructurePlacement;
@@ -80,6 +87,14 @@ public final class LodStructures {
 	final int levelMinY, levelMaxY;
 	final long columnSeed;
 	final int fullDetail;
+	/**
+	 * Before the overriders near a quad of columns run, compute every value any raw overrider reads, as Big Globe's
+	 * chunk generator does for every quad (and SeedGenGlobe 1.3.0 for quads near structures). Off, only what the
+	 * overriders of the structures near that quad read is computed (see {@link #precompute}).
+	 */
+	final boolean fullPrecompute;
+	/** The values to compute before overriding, per combination of raw overriders (bit = overrider index). */
+	private final ConcurrentHashMap<Long, Precompute> precomputes = new ConcurrentHashMap<>();
 	final @Nullable DifficultyInstance difficulty;
 	private final Climate.Sampler sampler;
 	private volatile @Nullable PalettedContainerFactory containers;
@@ -88,6 +103,8 @@ public final class LodStructures {
 	final AtomicLong placementFailures = new AtomicLong();
 	final AtomicLong overriddenQuads = new AtomicLong(), overrideNanos = new AtomicLong();
 	private final AtomicInteger reported = new AtomicInteger();
+	/** The generator is closing: scripts start failing as the server takes its registries away, which is not news. */
+	private volatile boolean closing;
 
 	private LodStructures(ServerLevel level, BigGlobeScriptedChunkGenerator generator, String name, List<Placement> placements) {
 		this.level = level;
@@ -102,6 +119,7 @@ public final class LodStructures {
 		this.overriders = generator.getOverriders();
 		this.structureRegistry = StructureLocator.structureRegistry(level);
 		this.fullDetail = GlobeConfig.get().structureDetail;
+		this.fullPrecompute = GlobeConfig.get().fullStructurePrecompute;
 		this.sampler = level.getChunkSource().randomState().sampler();
 		DifficultyInstance difficulty = null;
 		try {
@@ -213,6 +231,54 @@ public final class LodStructures {
 		}
 	}
 
+	/**
+	 * The column values (and world traits) a set of raw column value overriders depends on, computed for a quad before
+	 * those overriders change it. Big Globe computes the dependencies of all of its raw overriders before every quad,
+	 * so that each overrider sees the values as they were before any of them ran. Near a structure only the overriders
+	 * of the structures around it do anything, and what they read is all that has to be fixed beforehand. The rest
+	 * (cave and chasm values, for example, which the default Fill underground mode never computes at all) is the
+	 * likely bulk of 1.3.0's "structure terrain" time, which was as long as the terrain itself.
+	 * <p>
+	 * A value one of these overriders does not read, but which depends on a value it changes, is then computed after
+	 * the change rather than before it, unlike in Big Globe's own chunks; {@code fullStructurePrecompute} restores the
+	 * exact behaviour if that ever shows.
+	 */
+	record Precompute(ColumnValueInfo[] columns, WorldTraitInfo[] traits) {
+
+		void apply(QuadColumn quad) {
+			this.apply(quad.object00);
+			this.apply(quad.object01);
+			this.apply(quad.object10);
+			this.apply(quad.object11);
+		}
+
+		private void apply(ScriptedColumn column) {
+			for (ColumnValueInfo value : this.columns) value.preCompute(column);
+			for (WorldTraitInfo trait : this.traits) trait.preCompute(column.worldTraits(), column);
+		}
+	}
+
+	/** What to compute before the raw overriders whose indices are the set bits of {@code mask} run. */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	Precompute precompute(long mask) {
+		Precompute known = this.precomputes.get(mask);
+		if (known != null) return known;
+		Holder<ColumnValueOverrider.Entry>[] all = this.overriders.rawColumnValues.overriders();
+		List<Holder<ColumnValueOverrider.Entry>> chosen = new ArrayList<>();
+		for (int index = 0; index < all.length && index < 64; index++) {
+			if ((mask & (1L << index)) != 0L) chosen.add(all[index]);
+		}
+		FilteredSortingDependencyAnalyzer dependencies = this.overriders.extractDependencies(chosen.toArray(new Holder[0]), this.generator);
+		Precompute computed = new Precompute(dependencies.columnValueInfos(), dependencies.worldTraitInfos());
+		Precompute raced = this.precomputes.putIfAbsent(mask, computed);
+		return raced != null ? raced : computed;
+	}
+
+	/** Whether {@link #precompute} can describe every combination of this generator's raw overriders. */
+	boolean filteredPrecompute() {
+		return !this.fullPrecompute && this.overriders.rawColumnValues.overriders().length <= 64;
+	}
+
 	public StructureFrame newFrame(SectionSampler sampler) {
 		return new StructureFrame(this, sampler);
 	}
@@ -235,7 +301,53 @@ public final class LodStructures {
 		return this.generator.biome_source().getNoiseBiome(quartX, quartY, quartZ, this.sampler);
 	}
 
+	/** The generator closes: errors from here on come from the server going away and are not logged. */
+	public void close() {
+		this.closing = true;
+	}
+
+	/** Logs once that an ordinary structure set turned out small enough to leave out of coarse LODs. */
+	void logSizeDecision(String set, int starts, int span, int detail) {
+		if (this.closing) return;
+		SeedGenGlobe.LOGGER.info(
+			"SeedGenGlobe [{}]: {} structures are small (the largest of the first {} is {} blocks wide), so LODs coarser than detail {} leave them out",
+			this.name, set, starts, span, detail
+		);
+	}
+
+	/** Structure lookup time by set, largest first, for the status page and the log when the generator closes. */
+	public String lookupBreakdown(int limit) {
+		List<Placement> sets = new ArrayList<>(List.of(this.index.all));
+		sets.sort(Comparator.comparingLong((Placement placement) -> this.index.setNanos.get(placement.index())).reversed());
+		long total = Math.max(1L, this.index.nanos.get());
+		StringBuilder line = new StringBuilder();
+		int shown = 0;
+		for (Placement placement : sets) {
+			int set = placement.index();
+			long tiles = this.index.setTiles.get(set);
+			if (tiles == 0L || shown == limit) continue;
+			if (line.length() > 0) line.append(", ");
+			int detail = this.index.sizeDetail(placement);
+			line.append(String.format(
+				Locale.ROOT,
+				"%s %.0f%% (%,d tiles, %.1f ms each, %,d starts%s)",
+				placement.name(),
+				100.0D * this.index.setNanos.get(set) / total,
+				tiles,
+				this.index.setNanos.get(set) / 1.0e6D / tiles,
+				this.index.setStarts.get(set),
+				placement.tier() == 2 ? ", every detail"
+					: placement.tier() == 1 ? ", to detail " + (this.fullDetail + LARGE_EXTRA_DETAIL)
+					: detail < this.fullDetail ? ", to detail " + detail + ", widest " + this.index.setSpan.get(set) + " blocks"
+					: ""
+			));
+			shown++;
+		}
+		return line.toString();
+	}
+
 	void reportFailure(String what, Throwable error) {
+		if (this.closing) return;
 		int count = this.reported.incrementAndGet();
 		if (count <= DETAILED_FAILURES) {
 			SeedGenGlobe.LOGGER.warn("SeedGenGlobe [{}]: structure error while {}", this.name, what, error);
@@ -268,6 +380,9 @@ public final class LodStructures {
 			this.overriddenQuads.get() > 0 ? this.overrideNanos.get() / 1.0e3D / this.overriddenQuads.get() : 0.0D,
 			this.index.failures.get() + this.placementFailures.get() > 0 ? ", " + (this.index.failures.get() + this.placementFailures.get()) + " errors (see the log)" : ""
 		));
+		String breakdown = this.lookupBreakdown(6);
+		if (!breakdown.isEmpty()) lines.add("Structure lookup time by set: " + breakdown);
+		if (!this.fullPrecompute) lines.add(String.format(Locale.ROOT, "Structure terrain: inputs computed for %d combinations of overriders", this.precomputes.size()));
 		return lines;
 	}
 
@@ -278,7 +393,13 @@ public final class LodStructures {
 	 * @param tier 0 for all structure sets, 1 for the large ones, 2 for the giant ones (what far LODs get)
 	 */
 	public List<String> describe(int x, int z, int radius, int tier, int limit) {
-		List<Candidate> found = this.index.near(x - radius, z - radius, x + radius, z + radius, Math.max(0, Math.min(TIERS - 1, tier)), false);
+		// a detail level of each tier: the finest, one just past the structure detail, the coarsest
+		int detail = switch (Math.max(0, Math.min(TIERS - 1, tier))) {
+			case 0 -> 0;
+			case 1 -> Math.min(15, this.fullDetail + 1);
+			default -> 15;
+		};
+		List<Candidate> found = this.index.near(x - radius, z - radius, x + radius, z + radius, detail, false);
 		found.sort(Comparator.comparingLong(candidate -> distanceSquared(candidate, x, z)));
 		List<String> lines = new ArrayList<>();
 		for (Candidate candidate : found) {

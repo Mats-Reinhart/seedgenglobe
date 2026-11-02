@@ -58,6 +58,11 @@ public final class XaeroLodMap {
 	public static void tick(Minecraft minecraft) {
 		XaeroLodWriter writer = XaeroLodMap.writer;
 		if (writer == null || disabled) return;
+		if (!GlobeConfig.get().xaeroLodMap) {
+			// switched off in the settings: stop computing and writing (what is in Xaero's map stays until it maps over it)
+			if (writer.target() != null) writer.reset();
+			return;
+		}
 		try {
 			writer.tick(minecraft);
 			logProgress(writer);
@@ -85,7 +90,7 @@ public final class XaeroLodMap {
 		long now = System.nanoTime();
 		if (now - loggedAt < seconds * 1_000_000_000L) return;
 		loggedAt = now;
-		long progress = builder.liveSections.get() + builder.builtSections.get() + builder.savedRegions.get() + writer.filledTiles;
+		long progress = builder.liveSections.get() + builder.savedRegions.get() + writer.filledTiles;
 		if (progress == loggedProgress) return;
 		loggedProgress = progress;
 		List<String> lines = new ArrayList<>(builder.statusLines());
@@ -103,6 +108,17 @@ public final class XaeroLodMap {
 				SeedGenGlobe.LOGGER.debug("SeedGenGlobe: Xaero LOD map reset failed", throwable);
 			}
 		}
+	}
+
+	/** The map builder (for the progress overlay), or null when Xaero's World Map is not installed. */
+	public static @Nullable LodMapBuilder builder() {
+		return builder;
+	}
+
+	/** Whether the LOD map is being written into Xaero's map right now. */
+	public static boolean active() {
+		XaeroLodWriter writer = XaeroLodMap.writer;
+		return writer != null && !disabled && writer.target() != null;
 	}
 
 	public static List<String> statusLines() {
@@ -191,7 +207,7 @@ public final class XaeroLodMap {
 		LodMapStore existing = STORES.get(directory);
 		if (existing != null) return existing;
 		try {
-			LodMapStore store = LodMapStore.open(directory, LodMapBuilder.STORE_CACHE_CELLS);
+			LodMapStore store = LodMapStore.open(directory, LodMapBuilder.storeCacheCells());
 			STORES.put(directory, store);
 			return store;
 		}

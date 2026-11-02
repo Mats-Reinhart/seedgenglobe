@@ -75,8 +75,10 @@ final class XaeroLodWriter {
 	static final int MARKER = 0xC0;
 	static final long BUDGET_NANOS = 2_000_000L;
 	static final int MAX_OUTSTANDING_LOADS = 3;
-	/** Regions loaded on SeedGenGlobe's request that Xaero still holds in memory (about 10 to 20 MB each). */
-	static final int MAX_FORCED_IN_MEMORY = 6;
+	/** Regions loaded on SeedGenGlobe's request that Xaero may still hold in memory (about 10 to 20 MB each). */
+	static int maxForcedInMemory() {
+		return dev.seedgenglobe.GlobeConfig.get().memoryLoad.xaeroForcedRegions();
+	}
 	static final long RESCAN_MILLIS = 30_000L;
 	static final long LOAD_TIMEOUT_MILLIS = 60_000L;
 	/** A region Xaero does not hold in memory is loaded for new LOD data once that data is this old. */
@@ -212,7 +214,7 @@ final class XaeroLodWriter {
 		/** When the fill was finished, and when it last changed a tile (Xaero must save and cache after that). */
 		long filledAt, lastWriteAt;
 		long requestedAt, lastRequest;
-		/** Loaded on SeedGenGlobe's request: counts against {@link #MAX_FORCED_IN_MEMORY} until Xaero lets go of it. */
+		/** Loaded on SeedGenGlobe's request: counts against {@link #maxForcedInMemory()} until Xaero lets go of it. */
 		boolean forced;
 		boolean inPending, recorded;
 		/** Singleplayer map: handed to Xaero to show from its texture cache. */
@@ -242,6 +244,7 @@ final class XaeroLodWriter {
 		this.sweepList.clear();
 		this.sweepIndex = 0;
 		this.scanRegionX = Integer.MIN_VALUE;
+		this.exploredScans.clear();
 		this.builder.setTarget(null);
 	}
 
@@ -409,7 +412,7 @@ final class XaeroLodWriter {
 		}
 		// sections are still coming in: wait before loading the region, the builder's notice brings it back
 		if (meta.changedAt() > 0L && now - meta.changedAt() < SETTLE_MILLIS) return DONE;
-		if (this.outstanding.size() >= MAX_OUTSTANDING_LOADS || this.forcedInMemory() >= MAX_FORCED_IN_MEMORY) return STOP;
+		if (this.outstanding.size() >= MAX_OUTSTANDING_LOADS || this.forcedInMemory() >= maxForcedInMemory()) return STOP;
 		MapRegion region = existing != null ? existing : processor.getLeafMapRegion(SURFACE_LAYER, regionX, regionZ, true);
 		if (region == null) return DONE;
 		if (this.requestLoad(processor, region, state, now)) {
@@ -591,6 +594,7 @@ final class XaeroLodWriter {
 	private int sweepRegion(MapProcessor processor, Target target, MapRegion region, long deadline, long now) {
 		if (region.getLoadState() != 2) return DONE;
 		int regionX = region.getRegionX(), regionZ = region.getRegionZ();
+		this.findExplored(region, now);
 		LodMapStore.Meta meta = target.store.meta(regionX, regionZ);
 		if (meta == null) return DONE;
 		int stored = meta.detail();
@@ -614,6 +618,71 @@ final class XaeroLodWriter {
 		}
 		if (result == DONE && !state.wroteAny) state.skipUntil = now + 30_000L; // room, but no LOD data for it
 		return result;
+	}
+
+	/** When each loaded region was last looked at for coarse tiles next to explored ones. */
+	private final Map<Long, Long> exploredScans = new HashMap<>();
+
+	/**
+	 * Asks for one pixel per block wherever a coarse LOD tile, or a tile with nothing at all, touches a tile Xaero mapped
+	 * from a real chunk: explored land must not surround patches of coarse terrain. Each region is looked at every
+	 * 30 seconds at most; the builder asks itself about each 64-block square once.
+	 */
+	private void findExplored(MapRegion region, long now) {
+		if (dev.seedgenglobe.GlobeConfig.get().mapFullDetailRadius <= 0) return;
+		long key = LodRegion.key(region.getRegionX(), region.getRegionZ());
+		Long scanned = this.exploredScans.get(key);
+		if (scanned != null && now - scanned < 30_000L) return;
+		this.exploredScans.put(key, now);
+		if (this.exploredScans.size() > 4096) this.exploredScans.entrySet().removeIf(entry -> now - entry.getValue() > 120_000L);
+		// 32 x 32 tiles of 16 blocks: 0 = no data, 1 = coarse LOD tile, 2 = real (Xaero's own), 3 = LOD at one pixel per block
+		byte[] kinds = new byte[32 * 32];
+		boolean anyReal = false, anyCoarse = false;
+		synchronized (region) {
+			for (int lx = 0; lx < 8; lx++) {
+				for (int lz = 0; lz < 8; lz++) {
+					MapTileChunk chunk = region.getChunk(lx, lz);
+					if (chunk == null || chunk.getLoadState() != 2) {
+						if (chunk == null) anyCoarse = true;
+						continue;
+					}
+					for (int ix = 0; ix < 4; ix++) {
+						for (int iz = 0; iz < 4; iz++) {
+							MapTile tile = chunk.getTile(ix, iz);
+							byte kind;
+							if (tile == null || !tile.isLoaded()) kind = 0;
+							else if (!XaeroLodTiles.isLod(tile)) kind = 2;
+							else kind = (byte)((tile.getWorldInterpretationVersion() & 0x0F) == 0 ? 3 : 1);
+							kinds[((lx << 2) + ix) * 32 + (lz << 2) + iz] = kind;
+							if (kind == 2) anyReal = true;
+							else if (kind != 3) anyCoarse = true;
+						}
+					}
+				}
+			}
+		}
+		if (!anyReal || !anyCoarse) return;
+		int minX = region.getRegionX() * LodRegion.REGION_BLOCKS, minZ = region.getRegionZ() * LodRegion.REGION_BLOCKS;
+		for (int tx = 0; tx < 32; tx++) {
+			for (int tz = 0; tz < 32; tz++) {
+				byte kind = kinds[tx * 32 + tz];
+				if (kind == 2 || kind == 3) continue;
+				if (touchesReal(kinds, tx, tz)) this.builder.requestExplored(minX + (tx << 4), minZ + (tz << 4));
+			}
+		}
+	}
+
+	/** Whether a tile has a real (Xaero-mapped) tile among its eight neighbours inside the region. */
+	static boolean touchesReal(byte[] kinds, int tx, int tz) {
+		for (int dx = -1; dx <= 1; dx++) {
+			for (int dz = -1; dz <= 1; dz++) {
+				if (dx == 0 && dz == 0) continue;
+				int x = tx + dx, z = tz + dz;
+				if (x < 0 || z < 0 || x >= 32 || z >= 32) continue;
+				if (kinds[x * 32 + z] == 2) return true;
+			}
+		}
+		return false;
 	}
 
 	/** Whether any tile of a loaded region could take LOD data of this detail. */

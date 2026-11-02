@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -19,14 +20,16 @@ import com.seibel.distanthorizons.api.DhApi;
 import com.seibel.distanthorizons.api.enums.config.EDhApiHorizontalQuality;
 import com.seibel.distanthorizons.api.enums.config.EDhApiMaxHorizontalResolution;
 
+import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
 import dev.seedgenglobe.dh.GlobeWorldGenerator;
+import dev.seedgenglobe.gen.GenProgress;
+import dev.seedgenglobe.gen.SectionScheduler;
 import dev.seedgenglobe.structures.LodStructures;
 import dev.seedgenglobe.terrain.CanopyModel;
 import dev.seedgenglobe.terrain.GlobeTerrain;
 import dev.seedgenglobe.terrain.GroundCover;
 import dev.seedgenglobe.terrain.SampledColumns;
-import dev.seedgenglobe.terrain.SectionSampler;
 
 /**
  * Background thread that keeps the LOD surface map in {@link LodMapStore} filled.
@@ -36,12 +39,20 @@ import dev.seedgenglobe.terrain.SectionSampler;
  * it covers, keeping the finest data each cell has seen. Regions that changed are saved after a few seconds and handed
  * to the {@link XaeroLodWriter map writer}, so the map grows with the LODs, in the same detail levels.
  * <p>
- * Distant Horizons does not generate what it already has, so areas whose LODs were made before the map existed, or that
- * come from a Distant Horizons server, are left to this thread itself: it computes the sections Distant Horizons would
- * show there (same detail by distance, following its horizontal quality setting) one at a time, nearest first, but
- * only where the map has nothing as fine yet, only behind the area Distant Horizons is generating right now, and never
- * while sections from Distant Horizons are waiting.
- * <p>
+ * What Distant Horizons does not generate (areas it already had, a Distant Horizons server's LODs, and the finer
+ * detail the map wants near the player) the map computes itself, as jobs on the shared {@link SectionScheduler}, which
+ * runs them nearest to the player first, between Distant Horizons' own sections. Up to 1.2.0 this thread computed one
+ * section at a time at the lowest priority and was starved by generation, so gaps next to the player stayed black
+ * while generation moved outward. Now, nearest first:
+ * <ul>
+ * <li>the 64-block squares next to chunks Xaero has mapped itself get one pixel per block, so explored land never
+ * surrounds a coarse patch ({@link #requestExplored});</li>
+ * <li>within the full detail radius of the player everything gets one pixel per block;</li>
+ * <li>gaps (cells with no data at all) are filled anywhere within the map radius, far ones first at a coarser detail
+ * level, which is quick, and refined later;</li>
+ * <li>areas coarser than Distant Horizons would show them are refined, but only behind the area Distant Horizons is
+ * generating, since sections it generates reach the map anyway.</li>
+ * </ul>
  * Also reads stored regions from disk for the map writer, so the render thread never touches the disk.
  */
 public final class LodMapBuilder implements Runnable {
@@ -63,16 +74,25 @@ public final class LodMapBuilder implements Runnable {
 
 	/** Coarsest detail level the builder computes: one map pixel per 64 blocks. */
 	static final int MAX_DETAIL = 6;
+	/** Gaps nearer than this (plus the full detail radius) are filled at the detail wanted there right away. */
+	static final int NEAR_FIELD_BLOCKS = 2048;
+	/** Farther gaps are first filled this many detail levels coarser than wanted. */
+	static final int COARSE_FILL_LEVELS = 2;
 	/** The scan starts over from the nearest region once the player moved this far. */
 	static final int RESCAN_DISTANCE = 128;
 	/** A region that received data is saved and handed to the writer this long after its first change. */
 	static final long PUBLISH_MILLIS = 3_000L;
 	/** Regions that received nothing for this long are saved if needed and let go. */
 	static final long IDLE_MILLIS = 20_000L;
-	/** Cells all regions being merged may hold together, about 16 bytes each (8 regions at one pixel per block). */
-	static final long CANVAS_CELLS = 1L << 21;
+	/** Cells all regions being merged may hold together, about 16 bytes each: the memory load preset's amount. */
+	static long canvasCells() {
+		return GlobeConfig.get().memoryLoad.mapCells();
+	}
+
 	/** Cells the store keeps in memory for the writer. */
-	static final long STORE_CACHE_CELLS = 1L << 21;
+	static long storeCacheCells() {
+		return GlobeConfig.get().memoryLoad.mapCells();
+	}
 	/** Sections from Distant Horizons waiting to be merged; beyond this they are dropped, and the builder fills the gap later. */
 	static final int MAX_INCOMING = 256;
 	/** How far behind the nearest section Distant Horizons generated lately the builder stays. */
@@ -83,8 +103,8 @@ public final class LodMapBuilder implements Runnable {
 	/** One region's summary of how fine its data is, for the revision it was computed from. */
 	private record Coverage(long revision, byte[] squares) {}
 
-	/** A section the builder will compute. */
-	private record Job(long regionKey, int originX, int originZ, int detail) {}
+	/** A section the builder wants computed. */
+	private record Want(long regionKey, int originX, int originZ, int detail, SectionScheduler.Kind kind) {}
 
 	private volatile @Nullable Target target;
 	private volatile @Nullable MapFeed feed;
@@ -98,27 +118,35 @@ public final class LodMapBuilder implements Runnable {
 	private final ConcurrentLinkedQueue<Runnable> tasks = new ConcurrentLinkedQueue<>();
 	private final ConcurrentLinkedQueue<MapSection> incoming = new ConcurrentLinkedQueue<>();
 	private final AtomicInteger incomingCount = new AtomicInteger();
+	/** Sections the map's own jobs computed, merged ahead of the ones from Distant Horizons. */
+	private final ConcurrentLinkedQueue<MapSection> built = new ConcurrentLinkedQueue<>();
+	/** Map jobs on the scheduler, by {@link #sectionKey}. */
+	private final Set<Long> outstanding = ConcurrentHashMap.newKeySet();
+	/** 64-block squares next to explored chunks that should get one pixel per block (block x, z of the square). */
+	private final ConcurrentLinkedQueue<long[]> explored = new ConcurrentLinkedQueue<>();
+	private final Set<Long> exploredSeen = ConcurrentHashMap.newKeySet();
 	private final Thread thread;
+	/** Progress of the map's own sections, for the log, the chat and the overlay (one per target). */
+	private volatile @Nullable GenProgress progress;
 
 	// builder thread state
-	private @Nullable Target samplerTarget;
-	private @Nullable SectionSampler sampler;
 	private @Nullable LodMapStore canvasStore;
+	private final List<Want> exploredWants = new ArrayList<>();
 	private final Map<Long, RegionCanvas> canvases = new HashMap<>();
 	private final Map<Long, Coverage> coverage = new HashMap<>();
-	private final Set<Long> failed = new HashSet<>();
+	private final Set<Long> failed = ConcurrentHashMap.newKeySet();
 	private int scanCenterX = Integer.MIN_VALUE, scanCenterZ = Integer.MIN_VALUE, cleanRings;
 	private double frontDistance = Double.POSITIVE_INFINITY;
 	private long frontAt, lastLiveAt;
+	/** When the map's own sections were last planned, and when a full scan that found nothing may run again. */
+	private long scheduledAt, quietUntil;
+	private int quietCenterX, quietCenterZ;
 
 	final AtomicLong liveSections = new AtomicLong(), droppedSections = new AtomicLong();
 	final AtomicLong builtSections = new AtomicLong(), builtNanos = new AtomicLong(), savedRegions = new AtomicLong();
 
-	/**
-	 * Merging and saving are cheap and must keep up with generation, so the thread runs just below normal priority,
-	 * like the generator threads; it drops to the lowest priority only while it computes terrain of its own.
-	 */
-	static final int MERGE_PRIORITY = Thread.NORM_PRIORITY - 1, BUILD_PRIORITY = Thread.MIN_PRIORITY;
+	/** Merging and saving are cheap and must keep up with generation, so the thread runs just below normal priority. */
+	static final int MERGE_PRIORITY = Thread.NORM_PRIORITY - 1;
 	/** Sections merged in a row before saved regions get a turn. */
 	static final int MERGES_PER_PUBLISH = 16;
 
@@ -133,10 +161,17 @@ public final class LodMapBuilder implements Runnable {
 
 	public void setTarget(@Nullable Target target) {
 		Target previous = this.target;
+		if (previous == target) return;
 		MapFeed oldFeed = this.feed;
 		if (previous != null && previous.generator() != null && oldFeed != null && previous.generator().sectionListener() == oldFeed) {
 			previous.generator().setSectionListener(null);
 		}
+		if (previous != null) SectionScheduler.get().cancel(previous);
+		GenProgress oldProgress = this.progress;
+		if (oldProgress != null) oldProgress.close();
+		this.progress = target != null && target.generator() != null
+			? new GenProgress("Xaero LOD map", target.generator().dimensionId, target, true, target::radiusBlocks)
+			: null;
 		this.target = target;
 		MapFeed feed = target != null && target.generator() != null ? new MapFeed(this, target) : null;
 		this.feed = feed;
@@ -144,7 +179,14 @@ public final class LodMapBuilder implements Runnable {
 		this.loadRequests.clear();
 		this.requested.clear();
 		this.computed.clear();
+		this.explored.clear();
+		this.exploredSeen.clear();
 		LockSupport.unpark(this.thread);
+	}
+
+	/** Progress of the map's own sections, or null without a target. */
+	public @Nullable GenProgress progress() {
+		return this.progress;
 	}
 
 	public @Nullable Target target() {
@@ -161,6 +203,18 @@ public final class LodMapBuilder implements Runnable {
 		long key = LodRegion.key(regionX, regionZ);
 		if (this.requested.add(key)) {
 			this.loadRequests.add(key);
+			LockSupport.unpark(this.thread);
+		}
+	}
+
+	/**
+	 * Asks for one pixel per block in the 64-block square containing (x, z): Xaero mapped real chunks next to it, and
+	 * a coarse LOD patch surrounded by explored land looks wrong (any thread; each square is asked about once).
+	 */
+	public void requestExplored(int x, int z) {
+		int minX = Math.floorDiv(x, 64) * 64, minZ = Math.floorDiv(z, 64) * 64;
+		if (this.exploredSeen.add(sectionKey(minX, minZ, 0))) {
+			this.explored.add(new long[] { minX, minZ });
 			LockSupport.unpark(this.thread);
 		}
 	}
@@ -257,9 +311,18 @@ public final class LodMapBuilder implements Runnable {
 	}
 
 	/** Distant Horizons' detail scheme: how far a detail level reaches, and the finest one it uses. */
-	record Scheme(double unitBlocks, double logBase, int finest) {
+	record Scheme(double unitBlocks, double logBase, int finest, int fullDetailBlocks) {
 
-		static final Scheme MEDIUM = new Scheme(12 * 16, Math.log(2.0D), 0);
+		static final Scheme MEDIUM = new Scheme(12 * 16, Math.log(2.0D), 0, 0);
+
+		Scheme(double unitBlocks, double logBase, int finest) {
+			this(unitBlocks, logBase, finest, 0);
+		}
+
+		/** The detail level wanted at this distance: one pixel per block within the full detail radius. */
+		int wantedAt(double distance) {
+			return distance <= this.fullDetailBlocks ? 0 : this.detailAt(distance);
+		}
 
 		static Scheme current() {
 			try {
@@ -279,6 +342,11 @@ public final class LodMapBuilder implements Runnable {
 		int detailAt(double distance) {
 			return dhDetail(distance, this.unitBlocks, this.logBase, this.finest);
 		}
+
+		/** The scheme with one pixel per block within {@code blocks} of the player. */
+		Scheme withFullDetail(int blocks) {
+			return new Scheme(this.unitBlocks, this.logBase, this.finest, blocks);
+		}
 	}
 
 	/**
@@ -297,8 +365,10 @@ public final class LodMapBuilder implements Runnable {
 		int span = SampledColumns.WIDTH << detail;
 		if (originX >= regionMinX + LodRegion.REGION_BLOCKS || originX + span <= regionMinX) return;
 		if (originZ >= regionMinZ + LodRegion.REGION_BLOCKS || originZ + span <= regionMinZ) return;
+		// full detail where any part of the section is in the radius; DH's scheme by the section's centre elsewhere
+		double nearest = distanceToSquare(x, z, originX, originZ, span);
 		double cx = originX + span / 2.0D - x, cz = originZ + span / 2.0D - z;
-		int wanted = scheme.detailAt(Math.sqrt(cx * cx + cz * cz));
+		int wanted = nearest <= scheme.fullDetailBlocks() ? 0 : scheme.detailAt(Math.sqrt(cx * cx + cz * cz));
 		if (detail > wanted && detail > 0) {
 			int half = span >> 1;
 			collect(originX, originZ, detail - 1, regionMinX, regionMinZ, x, z, scheme, out);
@@ -328,6 +398,9 @@ public final class LodMapBuilder implements Runnable {
 					this.coverage.clear();
 					this.cleanRings = 0;
 					this.frontDistance = Double.POSITIVE_INFINITY;
+					this.failed.clear();
+					this.exploredWants.clear();
+					this.built.clear();
 				}
 				if (target == null) {
 					this.dropIncoming();
@@ -341,6 +414,11 @@ public final class LodMapBuilder implements Runnable {
 					continue;
 				}
 				long now = System.currentTimeMillis();
+				MapSection mine = this.built.poll();
+				if (mine != null) {
+					if (mine.owner == target) this.merge(target, mine, now);
+					continue;
+				}
 				if (this.mergedInARow < MERGES_PER_PUBLISH) {
 					MapSection section = this.incoming.poll();
 					if (section != null) {
@@ -352,8 +430,12 @@ public final class LodMapBuilder implements Runnable {
 				}
 				this.mergedInARow = 0;
 				if (this.publishDue(target, now)) continue;
+				// the map's own sections are planned at least twice a second, even while Distant Horizons' keep coming
+				if (this.incoming.isEmpty() || now - this.scheduledAt >= 500L) {
+					this.scheduledAt = now;
+					this.schedule(target, now);
+				}
 				if (!this.incoming.isEmpty()) continue;
-				if (this.buildStep(target, now)) continue;
 				LockSupport.parkNanos(250_000_000L);
 			}
 			catch (Throwable throwable) {
@@ -418,7 +500,7 @@ public final class LodMapBuilder implements Runnable {
 	private void trimCanvases(Target target, long now) {
 		long cells = 0L;
 		for (RegionCanvas canvas : this.canvases.values()) cells += canvas.size();
-		while (cells > CANVAS_CELLS && this.canvases.size() > 1) {
+		while (cells > canvasCells() && this.canvases.size() > 1) {
 			RegionCanvas eldest = null;
 			for (RegionCanvas canvas : this.canvases.values()) {
 				if (eldest == null || canvas.usedAt < eldest.usedAt) eldest = canvas;
@@ -473,53 +555,91 @@ public final class LodMapBuilder implements Runnable {
 		this.canvases.clear();
 	}
 
-	// ------------------------------------------------------------------------------------------------ filling holes
+	// ------------------------------------------------------------------------------------------------ the map's own sections
 
-	/** How far out the builder may work: everywhere, or only behind the area Distant Horizons is generating. */
+	static long sectionKey(int originX, int originZ, int detail) {
+		return (((long)(originX >> 6)) & 0xFFFFFFL) | ((((long)(originZ >> 6)) & 0xFFFFFFL) << 24) | ((long)(detail & 0xFF) << 48);
+	}
+
+	/** How far out refinement may go: everywhere, or only behind the area Distant Horizons is generating. */
 	private double reach(Target target, long now) {
 		if (now - this.lastLiveAt > FRONT_MILLIS) return target.radiusBlocks();
 		return Math.min(target.radiusBlocks(), this.frontDistance - FRONT_MARGIN);
 	}
 
-	/** Computes one section the map is missing. @return whether one was computed */
-	private boolean buildStep(Target target, long now) {
-		if (!this.incoming.isEmpty()) return false;
-		double reach = this.reach(target, now);
-		if (reach < 0.0D) return false;
-		Job job = this.findJob(target, reach);
-		if (job == null) return false;
-		long start = System.nanoTime();
-		try {
-			SectionSampler sampler = this.sampler(target);
-			this.thread.setPriority(BUILD_PRIORITY);
-			try {
-				sampler.sampleSection(job.originX(), job.originZ(), job.detail(), target.levelMinY(), target.levelMaxY(), target.topSkyLight());
-			}
-			finally {
-				this.thread.setPriority(MERGE_PRIORITY);
-			}
-			MapSection section = new MapSection(target, job.detail(), job.originX(), job.originZ(), false);
-			section.fill(sampler, target.rules());
-			// make sure the region of the job takes it even when its data is only as coarse as the section
-			if (!this.canvases.containsKey(job.regionKey())) this.openCanvas(target, LodRegion.keyX(job.regionKey()), LodRegion.keyZ(job.regionKey()), job.detail());
-			this.merge(target, section, System.currentTimeMillis());
-			this.builtSections.incrementAndGet();
-		}
-		catch (RuntimeException | StackOverflowError exception) {
-			this.failed.add(job.regionKey());
-			SeedGenGlobe.LOGGER.warn(
-				"SeedGenGlobe: could not compute the LOD map at {} {} (detail {}): {}",
-				job.originX(), job.originZ(), job.detail(), exception.toString()
-			);
-		}
-		finally {
-			this.builtNanos.addAndGet(System.nanoTime() - start);
-		}
-		return true;
+	/** One pixel per block within this many blocks of the player. */
+	static int fullDetailBlocks() {
+		return GlobeConfig.get().mapFullDetailRadius * 16;
 	}
 
-	/** The next section to compute: in the nearest region within reach whose data is coarser than Distant Horizons would show. */
-	private @Nullable Job findJob(Target target, double reach) {
+	/**
+	 * Map sections that may be on the scheduler at once: enough to keep every thread busy while Distant Horizons is
+	 * quiet, and half of them while it generates (its sections reach the map anyway).
+	 */
+	private int jobLimit(GlobeWorldGenerator generator) {
+		int threads = Math.max(1, SectionScheduler.get().threads());
+		return generator.progress.busy() ? Math.max(1, (threads + 1) / 2) : threads + 1;
+	}
+
+	/** Puts the map sections wanted most on the scheduler, up to the limit. */
+	private void schedule(Target target, long now) {
+		GlobeWorldGenerator generator = target.generator();
+		if (generator == null || generator.isClosed()) return;
+		int room = this.jobLimit(generator) - this.outstanding.size();
+		if (room <= 0) return;
+		this.takeExplored(target);
+		List<Want> wants = new ArrayList<>();
+		this.exploredWants.sort(java.util.Comparator.comparingDouble(want -> distanceToSquare(this.centerX, this.centerZ, want.originX(), want.originZ(), 64)));
+		for (java.util.Iterator<Want> iterator = this.exploredWants.iterator(); iterator.hasNext() && wants.size() < room; ) {
+			Want want = iterator.next();
+			iterator.remove();
+			if (this.coarserThan(target, want.originX(), want.originZ(), 64, 0)) wants.add(want);
+		}
+		if (wants.size() < room && (now >= this.quietUntil || Math.abs(this.centerX - this.quietCenterX) > RESCAN_DISTANCE || Math.abs(this.centerZ - this.quietCenterZ) > RESCAN_DISTANCE)) {
+			int before = wants.size();
+			this.findWants(target, now, room - wants.size(), wants);
+			if (wants.size() == before) {
+				// nothing to do anywhere: scan again in a while, or as soon as the player moves
+				this.quietUntil = now + 2_000L;
+				this.quietCenterX = this.centerX;
+				this.quietCenterZ = this.centerZ;
+			}
+		}
+		for (Want want : wants) this.submit(target, want);
+	}
+
+	/** Turns squares next to explored chunks into wants (detail 0), skipping ones already that fine. */
+	private void takeExplored(Target target) {
+		long[] square;
+		int radius = target.radiusBlocks();
+		while ((square = this.explored.poll()) != null) {
+			int minX = (int)(square[0]), minZ = (int)(square[1]);
+			if (distanceToSquare(this.centerX, this.centerZ, minX, minZ, 64) > radius) continue;
+			if (this.exploredWants.size() >= 4096) break;
+			long regionKey = LodRegion.key(Math.floorDiv(minX, LodRegion.REGION_BLOCKS), Math.floorDiv(minZ, LodRegion.REGION_BLOCKS));
+			this.exploredWants.add(new Want(regionKey, minX, minZ, 0, SectionScheduler.Kind.MAP_EXPLORED));
+		}
+	}
+
+	/** Whether the map's data over a square is coarser than {@code detail} (or missing somewhere). */
+	private boolean coarserThan(Target target, int minX, int minZ, int span, int detail) {
+		int regionX = Math.floorDiv(minX, LodRegion.REGION_BLOCKS), regionZ = Math.floorDiv(minZ, LodRegion.REGION_BLOCKS);
+		byte[] squares = this.squaresOf(target, regionX, regionZ);
+		if (squares == null) return true;
+		int localX = minX - regionX * LodRegion.REGION_BLOCKS, localZ = minZ - regionZ * LodRegion.REGION_BLOCKS;
+		return LodRegion.coverageSource(squares, localX, localZ, localX + span, localZ + span) > detail;
+	}
+
+	/** The coverage summary of a region from its canvas or the store, or null when it has no data at all. */
+	private byte @Nullable [] squaresOf(Target target, int regionX, int regionZ) {
+		RegionCanvas canvas = this.canvases.get(LodRegion.key(regionX, regionZ));
+		if (canvas != null) return canvas.coverage();
+		LodMapStore.Meta meta = target.store().meta(regionX, regionZ);
+		return meta == null ? null : this.coverageOf(target, regionX, regionZ, meta);
+	}
+
+	/** Collects up to {@code max} wanted sections, scanning regions in rings around the player, nearest first. */
+	private void findWants(Target target, long now, int max, List<Want> out) {
 		int x = this.centerX, z = this.centerZ;
 		if (Math.abs(x - this.scanCenterX) > RESCAN_DISTANCE || Math.abs(z - this.scanCenterZ) > RESCAN_DISTANCE) {
 			// the player moved: wanted detail levels changed, so rings that were complete may want finer data now
@@ -527,10 +647,13 @@ public final class LodMapBuilder implements Runnable {
 			this.scanCenterZ = z;
 			this.cleanRings = 0;
 		}
-		Scheme scheme = Scheme.current();
+		Scheme scheme = Scheme.current().withFullDetail(fullDetailBlocks());
+		double reach = this.reach(target, now);
+		GlobeWorldGenerator generator = target.generator();
 		int centerRegionX = Math.floorDiv(x, LodRegion.REGION_BLOCKS), centerRegionZ = Math.floorDiv(z, LodRegion.REGION_BLOCKS);
 		int rings = target.radiusBlocks() / LodRegion.REGION_BLOCKS + 2;
 		List<int[]> sections = new ArrayList<>();
+		Set<Long> taken = new HashSet<>();
 		for (int ring = this.cleanRings; ring <= rings; ring++) {
 			boolean clean = true;
 			int size = ringSize(ring);
@@ -539,40 +662,108 @@ public final class LodMapBuilder implements Runnable {
 				int regionX = LodRegion.keyX(key), regionZ = LodRegion.keyZ(key);
 				double distance = distanceToRegion(x, z, regionX, regionZ);
 				if (distance > target.radiusBlocks()) continue;
-				if (distance > reach) {
-					clean = false;
-					continue;
-				}
 				if (this.failed.contains(key)) continue;
 				sections.clear();
 				sectionsOver(regionX, regionZ, x, z, scheme, sections);
-				int[] missing = this.firstMissing(target, regionX, regionZ, sections);
-				if (missing != null) return new Job(key, missing[0], missing[1], missing[2]);
+				if (!this.wantsOf(target, generator, key, regionX, regionZ, sections, x, z, reach, scheme, taken, out)) clean = false;
+				if (out.size() >= max) return;
 			}
 			if (clean && ring == this.cleanRings) this.cleanRings = ring + 1;
 		}
-		return null;
 	}
 
-	/** The first of the sections the region has coarser data than (or no data) for, or null when it is complete. */
-	private int @Nullable [] firstMissing(Target target, int regionX, int regionZ, List<int[]> sections) {
-		long key = LodRegion.key(regionX, regionZ);
-		RegionCanvas canvas = this.canvases.get(key);
-		LodMapStore.Meta meta = target.store().meta(regionX, regionZ);
-		if (canvas == null && meta == null) return sections.isEmpty() ? null : sections.get(0);
-		int finest = Integer.MAX_VALUE;
-		for (int[] section : sections) finest = Math.min(finest, section[2]);
-		int maxSource = canvas != null ? canvas.maxSource() : meta.maxSource();
-		if (maxSource <= finest) return null;
-		byte[] squares = canvas != null ? canvas.coverage() : this.coverageOf(target, regionX, regionZ, meta);
-		if (squares == null) return sections.isEmpty() ? null : sections.get(0);
+	/**
+	 * Adds what a region still needs. @return whether the region is complete (nothing missing, nothing on its way)
+	 */
+	private boolean wantsOf(Target target, GlobeWorldGenerator generator, long key, int regionX, int regionZ, List<int[]> sections, int x, int z, double reach, Scheme scheme, Set<Long> taken, List<Want> out) {
+		byte[] squares = this.squaresOf(target, regionX, regionZ);
 		int minX = regionX * LodRegion.REGION_BLOCKS, minZ = regionZ * LodRegion.REGION_BLOCKS;
+		int full = scheme.fullDetailBlocks();
+		boolean complete = true;
 		for (int[] section : sections) {
-			int span = SampledColumns.WIDTH << section[2];
-			int source = LodRegion.coverageSource(squares, section[0] - minX, section[1] - minZ, section[0] + span - minX, section[1] + span - minZ);
-			if (source > section[2]) return section;
+			int originX = section[0], originZ = section[1], wanted = section[2];
+			int span = SampledColumns.WIDTH << wanted;
+			int source = squares == null ? LodRegion.NO_SOURCE : LodRegion.coverageSource(squares, originX - minX, originZ - minZ, originX + span - minX, originZ + span - minZ);
+			if (source <= wanted) continue;
+			complete = false;
+			double distance = distanceToSquare(x, z, originX, originZ, span);
+			SectionScheduler.Kind kind;
+			int detail = wanted;
+			if (distance <= full) {
+				kind = SectionScheduler.Kind.MAP_NEAR;
+			}
+			else if (source >= LodRegion.NO_SOURCE) {
+				kind = SectionScheduler.Kind.MAP_HOLE;
+				// a far gap: fill it quickly at a coarser level first, refine it later
+				if (distance > NEAR_FIELD_BLOCKS + full) detail = Math.min(MAX_DETAIL, wanted + COARSE_FILL_LEVELS);
+			}
+			else if (distance <= reach) {
+				kind = SectionScheduler.Kind.MAP_REFINE;
+			}
+			else {
+				continue; // Distant Horizons is still generating out there; its sections reach the map anyway
+			}
+			int jobSpan = SampledColumns.WIDTH << detail;
+			int jobX = Math.floorDiv(originX, jobSpan) * jobSpan, jobZ = Math.floorDiv(originZ, jobSpan) * jobSpan;
+			long sectionKey = sectionKey(jobX, jobZ, detail);
+			if (this.outstanding.contains(sectionKey) || !taken.add(sectionKey)) continue;
+			// a section Distant Horizons is about to generate at least as finely reaches the map through the feed
+			if (SectionScheduler.get().covered(generator, jobX, jobZ, jobSpan, detail)) continue;
+			out.add(new Want(key, jobX, jobZ, detail, kind));
 		}
-		return null;
+		return complete;
+	}
+
+	/** Queues one map section on the scheduler. */
+	private void submit(Target target, Want want) {
+		GlobeWorldGenerator generator = target.generator();
+		if (generator == null) return;
+		long key = sectionKey(want.originX(), want.originZ(), want.detail());
+		if (!this.outstanding.add(key)) return;
+		GenProgress progress = this.progress;
+		SectionScheduler.get().submit(new SectionScheduler.Job(want.kind(), target, generator.dimensionId, want.originX(), want.originZ(), want.detail()) {
+
+			@Override
+			public boolean cancelled() {
+				return LodMapBuilder.this.target != target || generator.isClosed() || !LodMapBuilder.this.running;
+			}
+
+			@Override
+			protected void execute() {
+				long start = System.nanoTime();
+				try {
+					MapSection section = new MapSection(target, want.detail(), want.originX(), want.originZ(), false);
+					generator.sampleForMap(want.originX(), want.originZ(), want.detail(), this::cancelled, columns -> section.fill(columns, target.rules()));
+					LodMapBuilder.this.built.add(section);
+					LodMapBuilder.this.builtSections.incrementAndGet();
+				}
+				finally {
+					LodMapBuilder.this.builtNanos.addAndGet(System.nanoTime() - start);
+					LodMapBuilder.this.finish(key);
+				}
+			}
+
+			@Override
+			protected void dropped() {
+				LodMapBuilder.this.finish(key);
+			}
+
+			@Override
+			protected void failed(Throwable throwable) {
+				if (!(throwable instanceof CancellationException)) LodMapBuilder.this.failed.add(want.regionKey());
+				LodMapBuilder.this.finish(key);
+			}
+
+			@Override
+			protected @Nullable GenProgress progress() {
+				return progress;
+			}
+		});
+	}
+
+	private void finish(long key) {
+		this.outstanding.remove(key);
+		LockSupport.unpark(this.thread);
 	}
 
 	private byte @Nullable [] coverageOf(Target target, int regionX, int regionZ, LodMapStore.Meta meta) {
@@ -586,22 +777,13 @@ public final class LodMapBuilder implements Runnable {
 		return squares;
 	}
 
-	private SectionSampler sampler(Target target) {
-		if (this.sampler == null || this.samplerTarget != target) {
-			this.sampler = new SectionSampler(target.terrain(), target.canopy(), target.ground(), target.structures());
-			this.samplerTarget = target;
-			this.failed.clear();
-		}
-		return this.sampler;
-	}
-
 	List<String> statusLines() {
 		List<String> lines = new ArrayList<>();
 		long live = this.liveSections.get(), built = this.builtSections.get(), dropped = this.droppedSections.get();
 		StringBuilder line = new StringBuilder(String.format(
 			java.util.Locale.ROOT,
-			"Xaero LOD map: %d sections taken from Distant Horizons' generation, %d computed for the map alone",
-			live, built
+			"Xaero LOD map: %d sections taken from Distant Horizons' generation, %d computed for the map alone (%d on the way)",
+			live, built, this.outstanding.size()
 		));
 		if (built > 0) line.append(String.format(java.util.Locale.ROOT, " (%.0f ms each)", this.builtNanos.get() / 1.0e6D / built));
 		line.append(String.format(java.util.Locale.ROOT, ", %d regions saved this session", this.savedRegions.get()));

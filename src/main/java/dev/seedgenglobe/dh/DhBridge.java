@@ -41,6 +41,11 @@ import dev.seedgenglobe.terrain.GroundCover;
  */
 public final class DhBridge {
 
+	/**
+	 * The open server-side generators. A generator leaves this map when it closes, however that happens (Distant
+	 * Horizons closing it, the level unload event, the server stopping): in 1.2.0 the unload event did not find
+	 * its generator, so every rejoin kept the old ones, with their level and structure caches, in memory.
+	 */
 	static final Map<IDhApiLevelWrapper, GlobeWorldGenerator> SERVER_GENERATORS = new ConcurrentHashMap<>();
 
 	private DhBridge() {}
@@ -50,7 +55,46 @@ public final class DhBridge {
 		DhApiResult<Void> unload = DhApiEventRegister.on(DhApiLevelUnloadEvent.class, new UnloadHandler());
 		if (!load.success) SeedGenGlobe.LOGGER.error("SeedGenGlobe could not listen for Distant Horizons level loads: {}", load.message);
 		if (!unload.success) SeedGenGlobe.LOGGER.warn("SeedGenGlobe could not listen for Distant Horizons level unloads: {}", unload.message);
+		dev.seedgenglobe.gen.GenProgress.DhPipelineView.set(() -> DhPipeline.describe(true));
 		SeedGenGlobe.LOGGER.info("SeedGenGlobe is bound to Distant Horizons {} (API {}.{}.{}).", DhApi.getModVersion(), DhApi.getApiMajorVersion(), DhApi.getApiMinorVersion(), DhApi.getApiPatchVersion());
+	}
+
+	/**
+	 * The server is stopping: stop every generator and wait for their sections to stop, while Big Globe's registries
+	 * are still there. Sections that kept running past this point failed with "Registries not available" in 1.2.0.
+	 */
+	public static void onServerStopping() {
+		List<GlobeWorldGenerator> generators = serverGenerators();
+		for (GlobeWorldGenerator generator : generators) generator.close();
+		long deadline = System.currentTimeMillis() + 10_000L;
+		for (GlobeWorldGenerator generator : generators) {
+			long left = deadline - System.currentTimeMillis();
+			if (left <= 0L || !generator.awaitStopped(left)) {
+				SeedGenGlobe.LOGGER.warn("SeedGenGlobe [{}]: some sections were still running when the server stopped.", generator.progress.name);
+			}
+		}
+		SERVER_GENERATORS.clear();
+	}
+
+	/** Distant Horizons' render distance in blocks, or 0 when it cannot be read (a dedicated server). */
+	public static int renderDistanceBlocks() {
+		try {
+			Integer value = DhApi.Delayed.configs != null ? DhApi.Delayed.configs.graphics().chunkRenderDistance().getValue() : null;
+			return value != null && value > 0 ? value * 16 : 0;
+		}
+		catch (RuntimeException | LinkageError error) {
+			return 0;
+		}
+	}
+
+	/** Whether SeedGenGlobe generates (on this side) the dimension a Minecraft level belongs to. */
+	public static boolean generates(Object minecraftLevel) {
+		if (!(minecraftLevel instanceof net.minecraft.world.level.Level level)) return false;
+		String dimension = level.dimension().identifier().toString();
+		for (GlobeWorldGenerator generator : SERVER_GENERATORS.values()) {
+			if (!generator.isClosed() && generator.dimensionId.equals(dimension)) return true;
+		}
+		return FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT && dev.seedgenglobe.client.ClientGeneration.generates(level);
 	}
 
 	public static final class LoadHandler extends DhApiLevelLoadEvent {
@@ -71,11 +115,15 @@ public final class DhBridge {
 		@Override
 		public void onLevelUnload(DhApiEventParam<EventParam> event) {
 			try {
-				GlobeWorldGenerator generator = SERVER_GENERATORS.remove(event.value.levelWrapper);
-				if (generator != null) {
-					SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] unloaded: {}", generator.stats.name, generator.stats.summary());
-					generator.close();
+				GlobeWorldGenerator generator = SERVER_GENERATORS.get(event.value.levelWrapper);
+				if (generator == null) {
+					// Distant Horizons may hand over a different wrapper object for the same level
+					Object level = event.value.levelWrapper.getWrappedMcObject();
+					for (GlobeWorldGenerator candidate : SERVER_GENERATORS.values()) {
+						if (candidate.level.getWrappedMcObject() == level) generator = candidate;
+					}
 				}
+				if (generator != null) generator.close();
 				if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
 					dev.seedgenglobe.client.ClientGeneration.onLevelUnload(event.value.levelWrapper);
 				}
@@ -111,9 +159,23 @@ public final class DhBridge {
 			? GroundCover.Shared.create(terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), level.getSeed(), overworldFlowers(level))
 			: null;
 		LodStructures structures = LodStructures.create(level, generator, dimension);
-		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground, structures);
-		if (register(wrapper, globe)) {
+		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, dimension, false, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground, structures);
+		// an earlier generator for the same level (a reload): close it, so it stops and lets go of its old level
+		for (Map.Entry<IDhApiLevelWrapper, GlobeWorldGenerator> entry : SERVER_GENERATORS.entrySet()) {
+			if (entry.getValue().dimensionId.equals(dimension)) entry.getValue().close();
+		}
+		boolean generate = GlobeConfig.get().dhGeneration;
+		if (!generate || register(wrapper, globe)) {
 			SERVER_GENERATORS.put(wrapper, globe);
+			globe.onClose(() -> {
+				SERVER_GENERATORS.remove(wrapper, globe);
+				SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] closed: {}", globe.progress.name, globe.progress.summary());
+			});
+			dev.seedgenglobe.gen.SectionScheduler.get().configure();
+			if (!generate) {
+				SeedGenGlobe.LOGGER.info("SeedGenGlobe: Distant Horizons LODs are off (dhGeneration=false); {} is only used for the Xaero LOD map.", dimension);
+				return;
+			}
 			SeedGenGlobe.LOGGER.info(
 				"SeedGenGlobe now generates Distant Horizons LODs for {} from Big Globe's terrain scripts ({}; level y {}..{}; {})",
 				dimension,
@@ -187,7 +249,7 @@ public final class DhBridge {
 		if (!result.success) {
 			SeedGenGlobe.LOGGER.error(
 				"SeedGenGlobe could not register its generator for {}: {}. If another mod uses override priority {}, change generatorPriority in {}.",
-				generator.stats.name,
+				generator.progress.name,
 				result.message,
 				generator.getPriority(),
 				GlobeConfig.FILE_NAME

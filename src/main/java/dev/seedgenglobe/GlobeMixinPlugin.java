@@ -56,6 +56,19 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 		Map.entry("SharedApiMixin", new String[] {
 			DH + "core/api/internal/SharedApi#applyChunkUpdate#(L" + DH + "core/wrapperInterfaces/chunk/IChunkWrapper;L" + DH + "core/wrapperInterfaces/world/ILevelWrapper;)V",
 		}),
+		Map.entry("WorldGenerationQueueMixin", new String[] {
+			DH + "core/generation/queues/WorldGenerationQueue#isGeneratorBusy#()Z",
+			DH + "core/generation/queues/WorldGenerationQueue#generator#L" + DH + "api/interfaces/override/worldGenerator/IDhApiWorldGenerator;",
+			DH + "core/generation/queues/WorldGenerationQueue#inProgressGenTasksByLodPos#Ljava/util/concurrent/ConcurrentHashMap;",
+			DH + "core/util/threading/ThreadPoolUtil#getWorldGenExecutor#()L" + DH + "core/util/threading/PriorityTaskPicker$Executor;",
+		}),
+		Map.entry("GeneratedFullDataSourceProviderMixin", new String[] {
+			DH + "core/file/fullDatafile/GeneratedFullDataSourceProvider#worldGenQueueRef#Ljava/util/concurrent/atomic/AtomicReference;",
+		}),
+		Map.entry("LodQuadTreeMixin", new String[] {
+			DH + "core/render/QuadTree/LodQuadTree#updateAllRenderSections#*#" + DH + "core/render/QuadTree/LodQuadTree.threadPoolCanAcceptWorldGenTasks()Z",
+			DH + "core/render/QuadTree/LodQuadTree#fullDataSourceProvider#L" + DH + "core/file/fullDatafile/V2/FullDataSourceProviderV2;",
+		}),
 		Map.entry("ClientBlockStateColorCacheMixin", new String[] {
 			DH + "common/wrappers/block/ClientBlockStateColorCache#getColor#(L" + DH + "common/wrappers/block/BiomeWrapper;L" + DH + "core/dataObjects/fullData/sources/FullDataSourceV2;L" + DH + "core/pos/blockPos/DhBlockPos;)I",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#clientLevelWrapper#L" + DH + "core/wrapperInterfaces/world/IClientLevelWrapper;",
@@ -73,6 +86,19 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 		}),
 		Map.entry("XaeroLodTileMixin", new String[] {
 			"xaero/map/MapWriter#writeChunk#*#xaero/map/region/MapTileChunk.getTile(II)Lxaero/map/region/MapTile;",
+			"xaero/map/region/MapTile#getWorldInterpretationVersion#()I",
+		}),
+		Map.entry("ModMenuCreditsMixin", new String[] {
+			"com/terraformersmc/modmenu/gui/widget/DescriptionListWidget#rebuildUI#*#com/terraformersmc/modmenu/util/mod/Mod.getCredits()Ljava/util/SortedMap;",
+			"com/terraformersmc/modmenu/gui/widget/DescriptionListWidget#rebuildUI#*#com/terraformersmc/modmenu/gui/widget/DescriptionListWidget.creditsRoleText(Ljava/lang/String;)Lnet/minecraft/network/chat/Component;",
+		}),
+		Map.entry("XaeroMinimapLodMixin", new String[] {
+			"xaero/common/mods/SupportXaeroWorldmap#prepareMapTexturedRect#(Lorg/joml/Matrix4f;FFIIFFLxaero/map/region/MapTileChunk;"
+				+ "Lxaero/common/graphics/renderer/multitexture/MultiTextureRenderTypeRenderer;Lxaero/common/graphics/renderer/multitexture/MultiTextureRenderTypeRenderer;"
+				+ "Lxaero/common/minimap/render/MinimapRendererHelper;)V",
+			"xaero/map/region/MapTileChunk#getLoadState#()I",
+			"xaero/map/region/MapTileChunk#getTile#(II)Lxaero/map/region/MapTile;",
+			"xaero/map/region/MapTile#isLoaded#()Z",
 			"xaero/map/region/MapTile#getWorldInterpretationVersion#()I",
 		})
 	);
@@ -101,18 +127,25 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 		if (!config.enabled || !ModCompat.DISTANT_HORIZONS || !ModCompat.BIG_GLOBE) return false;
 		boolean wanted = switch (name) {
 			case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> config.clientGeneration;
-			case "SharedApiMixin" -> ModCompat.VERTIGO && config.vertigoGuard;
+			case "SharedApiMixin" -> true; // dhChunkLodBuilding can be switched off at any time
+			case "WorldGenerationQueueMixin", "GeneratedFullDataSourceProviderMixin", "LodQuadTreeMixin" -> true; // so can dhRequestBoost
+			case "StructureManagerCaptureMixin" -> config.structures;
 			case "ClientBlockStateColorCacheMixin" -> config.bigGlobeColors;
 			case "XaeroMapWriterMixin" -> ModCompat.XAERO_WORLD_MAP && ModCompat.VERTIGO && config.vertigoGuard;
 			case "XaeroMinimapWriterMixin" -> ModCompat.XAERO_MINIMAP && ModCompat.VERTIGO && config.vertigoGuard;
 			case "XaeroLodTileMixin" -> ModCompat.XAERO_WORLD_MAP;
+			case "XaeroMinimapLodMixin" -> ModCompat.XAERO_MINIMAP && ModCompat.XAERO_WORLD_MAP; // xaeroMinimapLodMap can be switched at any time
+			case "ModMenuCreditsMixin" -> ModCompat.MOD_MENU;
 			default -> true;
 		};
 		if (!wanted) return false;
 		String problem = this.problem(name);
 		if (problem != null) {
 			SKIPPED.put(name, problem);
-			Log.LOGGER.warn("SeedGenGlobe: leaving out {} ({}): {}", name, name.startsWith("Xaero") ? "Xaero's maps " + ModCompat.version(name.contains("Minimap") ? "xaerominimap" : "xaeroworldmap") : "Distant Horizons " + ModCompat.version("distanthorizons"), problem);
+			String target = name.startsWith("Xaero") ? "Xaero's maps " + ModCompat.version(name.contains("Minimap") ? "xaerominimap" : "xaeroworldmap")
+				: name.startsWith("ModMenu") ? "Mod Menu " + ModCompat.version("modmenu")
+				: "Distant Horizons " + ModCompat.version("distanthorizons");
+			Log.LOGGER.warn("SeedGenGlobe: leaving out {} ({}): {}", name, target, problem);
 			return false;
 		}
 		return true;
@@ -124,13 +157,17 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 		for (Map.Entry<String, String> entry : SKIPPED.entrySet()) {
 			String feature = switch (entry.getKey()) {
 				case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> "multiplayer client generation";
-				case "SharedApiMixin" -> "the Vertigo guard";
+				case "SharedApiMixin" -> "turning off Distant Horizons' LODs from loaded chunks, and the Vertigo guard";
+				case "WorldGenerationQueueMixin", "GeneratedFullDataSourceProviderMixin", "LodQuadTreeMixin" -> "letting Distant Horizons hand SeedGenGlobe more sections at once (dhRequestBoost)";
+				case "StructureManagerCaptureMixin" -> "keeping LOD structures from asking the real level about structures";
 				case "ClientBlockStateColorCacheMixin" -> "Big Globe colours for LODs";
 				case "XaeroMapWriterMixin", "XaeroMinimapWriterMixin" -> "keeping Vertigo's partly synced chunks off Xaero's map";
 				case "XaeroLodTileMixin" -> "Xaero mapping real chunks over LOD tiles right away";
+				case "XaeroMinimapLodMixin" -> "hiding the LOD map from the minimap (xaeroMinimapLodMap=false)";
+				case "ModMenuCreditsMixin" -> "the short credits line in Mod Menu";
 				default -> entry.getKey();
 			};
-			String mod = entry.getKey().startsWith("XaeroMinimap") ? "Xaero's Minimap" : entry.getKey().startsWith("Xaero") ? "Xaero's World Map" : "Distant Horizons";
+			String mod = entry.getKey().startsWith("XaeroMinimap") ? "Xaero's Minimap" : entry.getKey().startsWith("Xaero") ? "Xaero's World Map" : entry.getKey().startsWith("StructureManager") ? "Minecraft" : entry.getKey().startsWith("ModMenu") ? "Mod Menu" : "Distant Horizons";
 			lines.add("Not available with this " + mod + " build: " + feature + " (" + entry.getValue() + ")");
 		}
 		return lines;

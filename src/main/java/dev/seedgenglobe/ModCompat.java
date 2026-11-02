@@ -26,6 +26,18 @@ public final class ModCompat {
 	public static final boolean VOXY = loaded("voxy");
 	public static final boolean XAERO_WORLD_MAP = loaded("xaeroworldmap");
 	public static final boolean XAERO_MINIMAP = loaded("xaerominimap") || loaded("xaerobetterpvp");
+	public static final boolean MOD_MENU = loaded("modmenu");
+	/** Running on a client (singleplayer included), where client classes exist. */
+	public static final boolean CLIENT = client();
+
+	private static boolean client() {
+		try {
+			return FabricLoader.getInstance().getEnvironmentType() == net.fabricmc.api.EnvType.CLIENT;
+		}
+		catch (Throwable ignored) {
+			return false;
+		}
+	}
 
 	private ModCompat() {}
 

@@ -26,12 +26,12 @@ public final class DiagnosticsBridge {
 		List<String> lines = new ArrayList<>();
 		List<GlobeWorldGenerator> generators = DhBridge.serverGenerators();
 		for (GlobeWorldGenerator generator : generators) {
-			lines.add(generator.stats.name + ": " + generator.stats.summary());
+			lines.add(generator.progress.name + ": " + generator.progress.summary());
 			if (generator.structures() != null) lines.addAll(generator.structures().statusLines());
 		}
 		if (!generators.isEmpty()) {
-			lines.add("Sections run on " + GeneratorThreads.describe() + ".");
-			String pipeline = DhPipeline.describe(GeneratorThreads.ownThreads());
+			lines.add("Sections run on " + dev.seedgenglobe.gen.SectionScheduler.get().describe() + ".");
+			String pipeline = DhPipeline.describe(true);
 			if (pipeline != null) lines.add(pipeline);
 		}
 		String advice = generators.isEmpty() ? null : DhBridge.nSizedAdvice();

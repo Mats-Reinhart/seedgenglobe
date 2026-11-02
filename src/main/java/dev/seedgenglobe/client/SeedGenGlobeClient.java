@@ -1,7 +1,6 @@
 package dev.seedgenglobe.client;
 
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -11,8 +10,9 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.ModCompat;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.gen.Focus;
 
-/** Client entrypoint: multiplayer generation, the Vertigo guard and Big Globe colours. */
+/** Client entrypoint: multiplayer generation, the Vertigo guard, Big Globe colours, the Xaero LOD map and progress. */
 public final class SeedGenGlobeClient implements ClientModInitializer {
 
 	private static boolean vertigo;
@@ -33,7 +33,8 @@ public final class SeedGenGlobeClient implements ClientModInitializer {
 				SeedGenGlobe.LOGGER.warn("SeedGenGlobe: this Vertigo version has an unexpected API; the Vertigo guard is off.", error);
 			}
 		}
-		if (ModCompat.XAERO_WORLD_MAP && config.xaeroLodMap) {
+		if (ModCompat.XAERO_WORLD_MAP) {
+			// set up even when switched off in the settings, so it can be switched on in game
 			try {
 				dev.seedgenglobe.xaero.XaeroLodMap.init();
 				xaero = true;
@@ -48,18 +49,39 @@ public final class SeedGenGlobeClient implements ClientModInitializer {
 			VertigoGuard.active = false;
 			if (xaero) dev.seedgenglobe.xaero.XaeroLodMap.onDisconnect();
 		});
-		ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> ClientStatusCommand.register(dispatcher));
+		ProgressOverlay.register();
+		ChatProgress.register();
 		SeedGenGlobe.LOGGER.info(
 			"SeedGenGlobe client: multiplayer generation {}, Vertigo guard {}, Big Globe colours {}, Xaero LOD map {}.",
 			config.clientGeneration ? "on" : "off",
 			vertigo ? "on" : "off",
 			config.bigGlobeColors ? "on" : "off",
-			xaero ? "on" : (ModCompat.XAERO_WORLD_MAP ? "off" : "not installed")
+			xaero ? (config.xaeroLodMap ? "on" : "off (can be switched on in game)") : (ModCompat.XAERO_WORLD_MAP ? "unavailable" : "not installed")
 		);
+	}
+
+	private static int focusTicks;
+
+	/** Twice a second: where the local player is, for nearest-first generation on this client and the LOD map. */
+	private static void updateFocus(Minecraft minecraft) {
+		if (++focusTicks % 10 != 0) return;
+		ClientLevel level = minecraft.level;
+		if (level == null || minecraft.player == null) return;
+		int[] xz = new int[] { minecraft.player.getBlockX(), minecraft.player.getBlockZ() };
+		String dimension = level.dimension().identifier().toString();
+		// in singleplayer the server reports every player; this only fills in while it does not tick (paused)
+		if (minecraft.hasSingleplayerServer()) Focus.refresh(dimension, xz);
+		else Focus.set(dimension, xz);
+	}
+
+	/** Whether the Xaero LOD map integration is set up (Xaero's World Map installed and its API as expected). */
+	static boolean xaero() {
+		return xaero;
 	}
 
 	private static void tick(Minecraft minecraft) {
 		try {
+			updateFocus(minecraft);
 			ClientGeneration.tick(minecraft);
 			if (vertigo) {
 				ClientLevel level = minecraft.level;
@@ -95,7 +117,10 @@ public final class SeedGenGlobeClient implements ClientModInitializer {
 			}
 		}
 		else if (ModCompat.XAERO_WORLD_MAP) {
-			lines.add("Xaero LOD map: off (xaeroLodMap=false)");
+			lines.add("Xaero LOD map: unavailable with this version of Xaero's World Map (see the log)");
+		}
+		if (xaero && !GlobeConfig.get().xaeroLodMap) {
+			lines.add("Xaero LOD map: switched off in the settings");
 		}
 		if (!xaero && vertigo && (ModCompat.XAERO_WORLD_MAP || ModCompat.XAERO_MINIMAP)) {
 			lines.add(dev.seedgenglobe.xaero.XaeroVertigoGuard.status());

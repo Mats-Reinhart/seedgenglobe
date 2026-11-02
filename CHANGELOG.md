@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.3.1
+
+### Settings screen (Mod Menu)
+- Laid out like Minecraft's own option screens: the title stays at the top, Page defaults, Cancel and Save & quit
+  stay at the bottom, and the page buttons and settings between them are one list that scrolls with a scrollbar when
+  the window is too small. In very small windows 1.3.0's page buttons filled the screen and the bottom row ran off
+  both edges.
+- Settings with more than three values are sliders (CPU load, memory load, overlay position, underground mode and
+  every number); the others stay buttons. The arrow keys move a slider one value at a time.
+- "Done" is now "Save & quit", and the Status button sits in the top right corner.
+- Two columns of settings from Minecraft's default window size on (they narrow to fit), and the page buttons keep
+  their layout when the page changes.
+- "Give way to the server" is now called "Server tps priority" (same setting, `yieldToServer`).
+- New `progressUnit` ("Distances in"): the overlay, chat milestones, status page and log count how far LODs and the
+  map are complete in chunks, like Distant Horizons' render distance (the default), or in blocks as before.
+  Milestones are the same distances: 64, 128, 256, ... chunks.
+- Mod Menu shows the credits as "Credits: Mats Reinhart". Mod Menu always puts a role heading ("Authors:") under
+  "Credits:"; a small client mixin leaves it out for SeedGenGlobe only, and is skipped on a Mod Menu that works
+  differently.
+
+### Performance (from the 1.3.0 tests against 1.1.0)
+- The generator threads run at normal priority, and drop to the CPU preset's lower priority only while the server is
+  behind (new `threadPriority`: Automatic, Normal, Lower). In 1.3.0 they always ran below normal; on Windows they then
+  lost every contest for the CPU with the server and Distant Horizons, the most likely reason the first minutes of a
+  new world ran at a fifth of 1.1.0's pace. Minimal and Low CPU load still run at low priority.
+- `dhRequestBoost` only lets Distant Horizons' render loader and file queue grow past its own limit (5 tasks per
+  thread) while SeedGenGlobe's threads are about to run out of sections. In 1.3.0 the boost kept generation going
+  while the render loader held up to 320 tasks, and terrain took twice as long per section; now they take turns as in
+  1.1.0. More
+  sections in flight than Distant Horizons' thread count plus one stays.
+- Structure terrain: before the overriders near a structure reshape the terrain, only the column values those
+  overriders read are computed, instead of everything any of Big Globe's raw overriders reads (cave and chasm values
+  included, which the Fill underground mode otherwise never computes). In 1.3.0 this took as long as the terrain
+  itself. `fullStructurePrecompute` (Advanced) brings back the exact 1.3.0 behaviour.
+- Structure lookup: small structure sets are left out of coarse LODs. Once 32 starts of a set were found, the set is
+  only looked up at detail levels whose cells are at most half as wide as its largest start, so houses, wells and
+  campfires stop at about detail 3 instead of `structureDetail` (5). Structure lookup was more than half the time of a
+  coarse section in 1.3.0. The log says which sets this applies to.
+- The status page and the log (when a world closes) break structure lookup time down by structure set.
+
+### Fixes
+- The "slower" reason said "the server is behind (22 ms per tick)" while generation was only speeding up again after
+  the server had been behind; it now says so.
+- Big Globe's "Expected ChestBlockEntity / DelayedGenerationBlockEntity ... in SeedGenGlobe structure capture"
+  warnings: blocks with a block entity that pieces place in columns a coarse LOD drops now still get their block
+  entity, so the scripts that fill them find it.
+- The status page's buttons fit small windows too.
+
+### Build
+- The offline link check also verifies members SeedGenGlobe's own classes inherit from Minecraft (the settings list's
+  rows, the sliders), against how other mods' subclasses use them.
+
 ## 1.3.0
 
 ### Generation order and speed

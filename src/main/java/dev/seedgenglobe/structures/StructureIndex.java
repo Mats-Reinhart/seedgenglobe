@@ -3,10 +3,14 @@ package dev.seedgenglobe.structures;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -24,6 +28,8 @@ import builderb0y.bigglobe.structures.management.FlatStructureLocator.ChunkSorte
 import builderb0y.bigglobe.structures.management.SmartStructurePlacement;
 import builderb0y.bigglobe.structures.management.StructureLocator.SortedStructurePieces;
 
+import dev.seedgenglobe.GlobeConfig;
+
 /**
  * Where Big Globe's structures are, found the way its own structure locator finds them, but kept apart from it.
  * <p>
@@ -35,6 +41,13 @@ import builderb0y.bigglobe.structures.management.StructureLocator.SortedStructur
  * since a script may treat its area in any way; the vanilla placements only look at each chunk on its own, so they
  * are asked about the whole tile at once. Collisions are checked against every start whose position is close enough
  * for its pieces to reach, like Big Globe does.
+ * <p>
+ * Small structures are left out of coarse LODs: once {@link #DECIDE_AFTER} starts of an ordinary set have been seen,
+ * the set is only looked up at detail levels whose LOD cells are at most half as wide as its largest start (see
+ * {@link #sizeDetail}). Big Globe says how far each structure may reach, but for its scripted ones (houses, wells,
+ * campfires) that is 8 chunks whatever their size, so the size comes from the starts themselves. In 1.3.0 every
+ * ordinary set was looked up for every section up to the structure detail setting, which made structure lookup more
+ * than half the time of a coarse section.
  */
 final class StructureIndex {
 
@@ -42,7 +55,6 @@ final class StructureIndex {
 	static final int TILE = 1 << TILE_SHIFT;
 	/** Big Globe's structure cells (FlatStructureLocator.StructurePos): the areas it asks script placements about. */
 	static final int CELL_SHIFT = 6;
-	static final int MAX_ENTRIES = 16384;
 	static final Candidate[] NONE = new Candidate[0];
 
 	/**
@@ -71,10 +83,10 @@ final class StructureIndex {
 		/** Which of the generator's raw column value overriders apply to it. */
 		final int[] rawOverriders;
 		/**
-		 * Per tier: 0 = not checked yet, 1 = survives the collision checks against the sets of that tier,
-		 * -1 = removed by them. Racing checks come to the same answer.
+		 * Per detail level: 0 = not checked yet, 1 = survives the collision checks against the sets looked up at that
+		 * level, -1 = removed by them. Racing checks come to the same answer.
 		 */
-		final int[] survives = new int[LodStructures.TIERS];
+		final byte[] survives = new byte[16];
 
 		Candidate(StructureStartWrapper start, Placement placement, LodStructures owner) {
 			this.start = start;
@@ -131,9 +143,23 @@ final class StructureIndex {
 
 	final AtomicLong computed = new AtomicLong(), found = new AtomicLong(), failures = new AtomicLong(), nanos = new AtomicLong();
 
+	/** Starts of an ordinary set seen before its size decides the detail levels it is looked up at. */
+	static final int DECIDE_AFTER = 32;
+	/** Per set: tiles computed, time spent on them, starts found, and the widest start (blocks). */
+	final AtomicLongArray setTiles, setNanos;
+	final AtomicIntegerArray setStarts, setSpan;
+	private final AtomicIntegerArray sizeLogged;
+
 	StructureIndex(LodStructures owner, Placement[] all) {
 		this.owner = owner;
 		this.all = all;
+		int sets = 0;
+		for (Placement placement : all) sets = Math.max(sets, placement.index() + 1);
+		this.setTiles = new AtomicLongArray(sets);
+		this.setNanos = new AtomicLongArray(sets);
+		this.setStarts = new AtomicIntegerArray(sets);
+		this.setSpan = new AtomicIntegerArray(sets);
+		this.sizeLogged = new AtomicIntegerArray(sets);
 		for (int tier = 0; tier < LodStructures.TIERS; tier++) {
 			List<Placement> placements = new ArrayList<>();
 			for (Placement placement : all) {
@@ -196,10 +222,57 @@ final class StructureIndex {
 		else {
 			this.generate(placement, minX, minZ, TILE, columns, found);
 		}
+		long spent = System.nanoTime() - start;
 		this.computed.incrementAndGet();
 		this.found.addAndGet(found.size());
-		this.nanos.addAndGet(System.nanoTime() - start);
+		this.nanos.addAndGet(spent);
+		int set = placement.index();
+		this.setTiles.incrementAndGet(set);
+		this.setNanos.addAndGet(set, spent);
+		if (!found.isEmpty()) {
+			int widest = 0;
+			for (Candidate candidate : found) widest = Math.max(widest, span(candidate.box));
+			int span = widest;
+			this.setSpan.accumulateAndGet(set, span, Math::max);
+			int seen = this.setStarts.addAndGet(set, found.size());
+			if (placement.tier() == 0 && seen >= DECIDE_AFTER && this.sizeLogged.compareAndSet(set, 0, 1)) {
+				int detail = this.sizeDetail(placement);
+				if (detail < this.owner.fullDetail) {
+					this.owner.logSizeDecision(placement.name(), seen, this.setSpan.get(set), detail);
+				}
+			}
+		}
 		return found.isEmpty() ? NONE : found.toArray(NONE);
+	}
+
+	/** Width of a structure start in blocks: the larger side of its bounding box. */
+	static int span(BoundingBox box) {
+		return Math.max(box.maxX() - box.minX() + 1, box.maxZ() - box.minZ() + 1);
+	}
+
+	/**
+	 * The coarsest detail level a structure this wide shows at: LOD cells (2^detail blocks) at most half its width,
+	 * so it covers two cells or more. 16 blocks: 3; 32: 4; 64: 5.
+	 */
+	static int detailForSpan(int span) {
+		int log = 31 - Integer.numberOfLeadingZeros(Math.max(1, span));
+		return Math.max(0, log - 1);
+	}
+
+	/**
+	 * The coarsest detail level an ordinary set is looked up at, from the size of its starts so far; unlimited
+	 * (the structure detail setting decides) until {@link #DECIDE_AFTER} starts were seen, and for large and giant sets.
+	 */
+	int sizeDetail(Placement placement) {
+		if (placement.tier() > 0) return Integer.MAX_VALUE;
+		int set = placement.index();
+		if (this.setStarts.get(set) < DECIDE_AFTER) return Integer.MAX_VALUE;
+		return detailForSpan(this.setSpan.get(set));
+	}
+
+	/** Whether a set is looked up for sections of this detail level. */
+	boolean included(Placement placement, int detail) {
+		return placement.tier() >= this.owner.tier(detail) && detail <= this.sizeDetail(placement);
 	}
 
 	private void generate(Placement placement, int minX, int minZ, int size, ScriptedColumnLookup columns, List<Candidate> found) {
@@ -224,8 +297,13 @@ final class StructureIndex {
 		}
 	}
 
+	/** Tiles kept: the memory load preset's number. */
+	static int maxEntries() {
+		return GlobeConfig.get().memoryLoad.structureTiles();
+	}
+
 	private void maybeEvict() {
-		if (this.entries.size() <= MAX_ENTRIES || !this.evicting.tryLock()) return;
+		if (this.entries.size() <= maxEntries() || !this.evicting.tryLock()) return;
 		try {
 			long[] uses = this.entries.values().stream().filter(entry -> entry.result.isDone()).mapToLong(entry -> entry.lastUse).sorted().toArray();
 			if (uses.length == 0) return;
@@ -237,19 +315,21 @@ final class StructureIndex {
 		}
 	}
 
-	/** Whether a start survives Big Globe's collision checks against the structure sets of a tier. */
-	boolean survives(Candidate candidate, int tier) {
-		int known = candidate.survives[tier];
+	/** Whether a start survives Big Globe's collision checks against the structure sets looked up at a detail level. */
+	boolean survives(Candidate candidate, int detail) {
+		int slot = Math.max(0, Math.min(candidate.survives.length - 1, detail));
+		int known = candidate.survives[slot];
 		if (known != 0) return known > 0;
-		boolean survives = this.checkCollisions(candidate, this.tiers[tier]);
-		candidate.survives[tier] = survives ? 1 : -1;
+		boolean survives = this.checkCollisions(candidate, detail);
+		candidate.survives[slot] = (byte)(survives ? 1 : -1);
 		return survives;
 	}
 
-	private boolean checkCollisions(Candidate candidate, Placement[] placements) {
+	private boolean checkCollisions(Candidate candidate, int detail) {
 		BoundingBox box = candidate.box;
 		ScriptedColumnLookup columns = null;
-		for (Placement placement : placements) {
+		for (Placement placement : this.tiers[this.owner.tier(detail)]) {
+			if (!this.included(placement, detail)) continue;
 			int reach = placement.radius();
 			int minTileX = (box.minX() - reach) >> TILE_SHIFT, maxTileX = (box.maxX() + reach) >> TILE_SHIFT;
 			int minTileZ = (box.minZ() - reach) >> TILE_SHIFT, maxTileZ = (box.maxZ() + reach) >> TILE_SHIFT;
@@ -282,18 +362,28 @@ final class StructureIndex {
 	 * @param grow also take starts whose box is within their own radius of the area: the ones Big Globe hands to its
 	 * column value overriders for the columns there
 	 */
-	List<Candidate> near(int minX, int minZ, int maxX, int maxZ, int tier, boolean grow) {
+	List<Candidate> near(int minX, int minZ, int maxX, int maxZ, int detail, boolean grow) {
+		return this.near(minX, minZ, maxX, maxZ, detail, grow, () -> false);
+	}
+
+	/**
+	 * As above, for the structure sets a section of this detail level gets, checking {@code cancel} before every tile
+	 * (a tile can take a while to compute the first time).
+	 */
+	List<Candidate> near(int minX, int minZ, int maxX, int maxZ, int detail, boolean grow, BooleanSupplier cancel) {
 		List<Candidate> result = new ArrayList<>();
-		for (Placement placement : this.tiers[tier]) {
+		for (Placement placement : this.tiers[this.owner.tier(detail)]) {
+			if (!this.included(placement, detail)) continue;
 			int reach = grow ? placement.radius() * 2 : placement.radius();
 			int minTileX = (minX - reach) >> TILE_SHIFT, maxTileX = (maxX + reach) >> TILE_SHIFT;
 			int minTileZ = (minZ - reach) >> TILE_SHIFT, maxTileZ = (maxZ + reach) >> TILE_SHIFT;
 			for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
 				for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
+					if (cancel.getAsBoolean()) throw new CancellationException("SeedGenGlobe section no longer wanted");
 					for (Candidate candidate : this.tile(tileX, tileZ, placement)) {
 						int margin = grow ? candidate.radius : 0;
 						if (!candidate.box.intersects(minX - margin, minZ - margin, maxX + margin, maxZ + margin)) continue;
-						if (!this.survives(candidate, tier)) continue;
+						if (!this.survives(candidate, detail)) continue;
 						result.add(candidate);
 					}
 				}

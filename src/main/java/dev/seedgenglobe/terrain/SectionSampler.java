@@ -1,5 +1,8 @@
 package dev.seedgenglobe.terrain;
 
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
+
 import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.core.Holder;
@@ -18,6 +21,7 @@ import builderb0y.bigglobe.scripting.wrappers.entries.BiomeEntry;
 
 import dev.seedgenglobe.GlobeConfig;
 import dev.seedgenglobe.SeedGenGlobe;
+import dev.seedgenglobe.gen.GenProgress.Phase;
 import dev.seedgenglobe.structures.LodStructures;
 import dev.seedgenglobe.structures.StructureFrame;
 
@@ -47,6 +51,11 @@ public final class SectionSampler implements SampledColumns {
 	private final boolean sampleCenter;
 
 	public int lastErrors;
+	/**
+	 * Where the time of each section goes, by {@link Phase} (nanoseconds, added to), or null to not time it.
+	 * Set by the generator for the section it is about to sample.
+	 */
+	public long @Nullable [] phases;
 
 	public SectionSampler(GlobeTerrain terrain, @Nullable CanopyModel.Shared canopy, @Nullable GroundCover.Shared ground, @Nullable LodStructures structures) {
 		this.terrain = terrain;
@@ -63,11 +72,11 @@ public final class SectionSampler implements SampledColumns {
 		}
 		this.canopy = canopy != null ? new CanopyModel(canopy, this) : null;
 		this.ground = ground != null ? new GroundCover(ground, this) : null;
-		this.useBigGlobeUndergroundSetting = config.undergroundMode.equals("bigglobe");
+		this.useBigGlobeUndergroundSetting = config.undergroundMode == GlobeConfig.UndergroundMode.BIGGLOBE;
 		this.underground = switch (config.undergroundMode) {
-			case "none" -> UndergroundMode.NONE;
-			case "carve" -> UndergroundMode.CARVE;
-			case "decorate" -> UndergroundMode.DECORATE;
+			case NONE -> UndergroundMode.NONE;
+			case CARVE -> UndergroundMode.CARVE;
+			case DECORATE -> UndergroundMode.DECORATE;
 			default -> UndergroundMode.FILL;
 		};
 		this.sampleCenter = config.sampleCellCenter;
@@ -104,33 +113,74 @@ public final class SectionSampler implements SampledColumns {
 	 * @param levelMaxY top of the level (exclusive)
 	 */
 	public void sampleSection(int originX, int originZ, int detail, int levelMinY, int levelMaxY, byte topSkyLight) {
+		this.sampleSection(originX, originZ, detail, levelMinY, levelMaxY, topSkyLight, () -> false);
+	}
+
+	private void time(Phase phase, long since) {
+		long[] phases = this.phases;
+		if (phases != null) phases[phase.ordinal()] += System.nanoTime() - since;
+	}
+
+	private static void check(BooleanSupplier cancel) {
+		if (cancel.getAsBoolean()) throw new CancellationException("SeedGenGlobe section no longer wanted");
+	}
+
+	/**
+	 * Fills all 64 x 64 profiles of the section whose minimum corner is (originX, originZ), checking {@code cancel}
+	 * before each part of the work and after every row of columns: when it says stop, the section is abandoned with a
+	 * {@link CancellationException} (a sixty-fourth of a section later at most), and the sampler stays usable.
+	 */
+	public void sampleSection(int originX, int originZ, int detail, int levelMinY, int levelMaxY, byte topSkyLight, BooleanSupplier cancel) {
+		check(cancel);
 		int step = 1 << detail;
 		int half = this.halfCell(detail);
 		ScriptedColumn.Params params = new ScriptedColumn.Params(0, 0, this.terrain.worldInfo, this.hintsFor(detail));
 		int genMinY = this.terrain.minY;
 		int genMaxY = this.terrain.maxY;
 		this.lastErrors = 0;
+		this.observeNanos = 0L;
 		if (this.ground != null) this.ground.begin();
 		boolean structures = false;
 		if (this.structures != null) {
+			long lookupStart = System.nanoTime();
 			try {
-				structures = this.structures.begin(originX, originZ, detail, levelMinY, levelMaxY, topSkyLight);
+				structures = this.structures.begin(originX, originZ, detail, levelMinY, levelMaxY, topSkyLight, cancel);
+			}
+			catch (CancellationException cancelled) {
+				throw cancelled;
 			}
 			catch (Throwable throwable) {
 				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
 					throw error;
 				}
+				check(cancel);
 				this.lastErrors++;
 				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
 			}
+			finally {
+				this.time(Phase.STRUCTURE_LOOKUP, lookupStart);
+			}
 		}
+		long terrainStart = System.nanoTime();
+		long[] phases = this.phases;
+		long excluded = 0L;
 		for (int relZ = 0; relZ < WIDTH; relZ += 2) {
+			if (cancel.getAsBoolean()) {
+				if (phases != null) phases[Phase.TERRAIN.ordinal()] += System.nanoTime() - terrainStart - excluded;
+				throw new CancellationException("SeedGenGlobe section no longer wanted");
+			}
 			for (int relX = 0; relX < WIDTH; relX += 2) {
 				int x = originX + (relX << detail) + half;
 				int z = originZ + (relZ << detail) + half;
 				try {
 					this.quad.at(params, x, z, step);
-					if (structures) this.structures.override(this.quad, x, z, step);
+					if (structures) {
+						long overrideStart = System.nanoTime();
+						this.structures.override(this.quad, x, z, step);
+						long spent = System.nanoTime() - overrideStart;
+						excluded += spent;
+						if (phases != null) phases[Phase.STRUCTURE_TERRAIN.ordinal()] += spent;
+					}
 					QuadList lists = new QuadList();
 					lists.createNew(genMinY, genMaxY);
 					QuadHolder.generate(this.quad, lists, this.terrain.layer);
@@ -143,6 +193,8 @@ public final class SectionSampler implements SampledColumns {
 					if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
 						throw error;
 					}
+					// scripts fail once the server that owns their registries stops: that is the section being stopped
+					check(cancel);
 					this.lastErrors++;
 					SeedGenGlobe.logColumnError(this.terrain, x, z, throwable);
 					this.profile(relX,     relZ    ).fillAir(this.air, levelMinY, levelMaxY, topSkyLight);
@@ -152,19 +204,33 @@ public final class SectionSampler implements SampledColumns {
 				}
 			}
 		}
+		excluded += this.observeNanos;
+		this.observeNanos = 0L;
+		if (phases != null) phases[Phase.TERRAIN.ordinal()] += System.nanoTime() - terrainStart - excluded;
 		if (structures) {
+			check(cancel);
+			long placeStart = System.nanoTime();
 			try {
-				this.structures.place();
+				this.structures.place(cancel);
+			}
+			catch (CancellationException cancelled) {
+				throw cancelled;
 			}
 			catch (Throwable throwable) {
 				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
 					throw error;
 				}
+				check(cancel);
 				this.lastErrors++;
 				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
 			}
+			finally {
+				this.time(Phase.STRUCTURES, placeStart);
+			}
 		}
 		if (this.canopy != null) {
+			check(cancel);
+			long canopyStart = System.nanoTime();
 			try {
 				this.canopy.apply(originX, originZ, detail, levelMinY);
 			}
@@ -172,11 +238,17 @@ public final class SectionSampler implements SampledColumns {
 				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
 					throw error;
 				}
+				check(cancel);
 				this.lastErrors++;
 				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
 			}
+			finally {
+				this.time(Phase.TREES, canopyStart);
+			}
 		}
 		if (this.ground != null) {
+			check(cancel);
+			long groundStart = System.nanoTime();
 			try {
 				this.ground.apply();
 			}
@@ -184,11 +256,18 @@ public final class SectionSampler implements SampledColumns {
 				if (throwable instanceof VirtualMachineError error && !(throwable instanceof StackOverflowError)) {
 					throw error;
 				}
+				check(cancel);
 				this.lastErrors++;
 				SeedGenGlobe.logColumnError(this.terrain, originX, originZ, throwable);
 			}
+			finally {
+				this.time(Phase.GROUND_COVER, groundStart);
+			}
 		}
 	}
+
+	/** Time spent in tree and ground cover observers during the column loop, moved out of the terrain phase. */
+	private long observeNanos;
 
 	/**
 	 * Computes the single column at (x, z) at full resolution, without tree canopies.
@@ -222,10 +301,18 @@ public final class SectionSampler implements SampledColumns {
 			this.air
 		);
 		profile.biome = this.biomeAt(column, profile);
+		long[] phases = this.phases;
 		if (this.canopy != null) {
+			long start = phases != null ? System.nanoTime() : 0L;
 			this.canopy.observe(column, profile, relX, relZ);
+			if (phases != null) {
+				long spent = System.nanoTime() - start;
+				phases[Phase.TREES.ordinal()] += spent;
+				this.observeNanos += spent;
+			}
 		}
 		if (this.ground != null) {
+			long start = phases != null ? System.nanoTime() : 0L;
 			try {
 				this.ground.observe(column, profile, relX, relZ, originX + (relX << detail), originZ + (relZ << detail), detail);
 			}
@@ -234,6 +321,11 @@ public final class SectionSampler implements SampledColumns {
 				this.ground.forget(relX, relZ);
 				this.lastErrors++;
 				SeedGenGlobe.logColumnError(this.terrain, column.x(), column.z(), exception);
+			}
+			if (phases != null) {
+				long spent = System.nanoTime() - start;
+				phases[Phase.GROUND_COVER.ordinal()] += spent;
+				this.observeNanos += spent;
 			}
 		}
 	}

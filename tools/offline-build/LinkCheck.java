@@ -16,6 +16,11 @@ import java.util.zip.*;
  *    scanned mod makes with the same owner, name and descriptor (proof the member exists in 26.1.2),
  *    otherwise they are reported for manual review.
  * Also checks @Inject targets and @Shadow members of mixins against the real target classes.
+ * <p>
+ * Members a class inherits are referenced through that class (javac writes {@code this.getY()} in a subclass of a
+ * Minecraft widget as {@code MyEntry.getY}). Since 1.3.1 such references, in SeedGenGlobe and in the scanned mods
+ * alike, are followed up the class chain to the first class outside the jar that defines the subclass, so a member a
+ * SeedGenGlobe widget inherits from Minecraft is verified when another mod's widget uses it the same way.
  *
  * usage: LinkCheck <mod.jar> <surfaceDir> <scannedJar...>
  */
@@ -27,19 +32,42 @@ public class LinkCheck {
     static final Set<String> seenRefs = new HashSet<>();      // owner name desc (from scanned bytecode)
     static final Map<String, Set<String>> seenKinds = new HashMap<>(); // owner name desc -> {opcode/itf}
     static final Map<String, Set<String>> seenByNameDesc = new HashMap<>(); // name+desc -> owners
-    static int errors = 0, unverified = 0, ok = 0;
+    static int errors = 0, unverified = 0, ok = 0, inherited = 0;
+    /** Classes the scanned mods define: superclass, interfaces, and their own members ("class name desc"). */
+    static final Map<String, String> surfaceSuper = new HashMap<>();
+    static final Map<String, List<String>> surfaceInterfaces = new HashMap<>();
+    static final Set<String> surfaceMembers = new HashSet<>();
     static final Set<String> reported = new TreeSet<>();
 
     public static void main(String[] args) throws Exception {
         Path modJar = Path.of(args[0]);
         Path surface = Path.of(args[1]);
         for (int i = 2; i < args.length; i++) loadJar(Files.readAllBytes(Path.of(args[i])));
+        Path definedFile = surface.resolve("defined.tsv");
+        if (Files.isRegularFile(definedFile)) {
+            for (String line : Files.readAllLines(definedFile)) {
+                String[] t = line.split("\t", -1);
+                if (t.length < 4) continue;
+                if (t[0].equals("C")) {
+                    surfaceSuper.putIfAbsent(t[1], t[3]);
+                    if (t.length > 4 && !t[4].isEmpty()) surfaceInterfaces.putIfAbsent(t[1], List.of(t[4].split(",")));
+                }
+                else if (t[0].equals("M") || t[0].equals("F")) surfaceMembers.add(t[1] + " " + t[2] + " " + t[3]);
+            }
+        }
         for (String line : Files.readAllLines(surface.resolve("refs.tsv"))) {
             String[] t = line.split("\t");
             if (t.length < 4) continue;
-            seenRefs.add(t[1] + " " + t[2] + " " + t[3]);
-            if (t.length >= 5) seenKinds.computeIfAbsent(t[1] + " " + t[2] + " " + t[3], k -> new TreeSet<>()).add(t[0] + "/" + t[4]);
-            seenByNameDesc.computeIfAbsent(t[2] + " " + t[3], k -> new TreeSet<>()).add(t[1]);
+            List<String> owners = new ArrayList<>(2);
+            owners.add(t[1]);
+            // a member another mod's class inherits from outside its jar also counts for that outside class
+            String base = inheritedFrom(t[1], t[2], t[3]);
+            if (base != null && !base.equals(t[1])) owners.add(base);
+            for (String owner : owners) {
+                seenRefs.add(owner + " " + t[2] + " " + t[3]);
+                if (t.length >= 5) seenKinds.computeIfAbsent(owner + " " + t[2] + " " + t[3], k -> new TreeSet<>()).add(t[0] + "/" + t[4]);
+                seenByNameDesc.computeIfAbsent(t[2] + " " + t[3], k -> new TreeSet<>()).add(owner);
+            }
         }
         Map<String, ClassModel> mine = new HashMap<>();
         try (ZipInputStream zin = new ZipInputStream(Files.newInputStream(modJar))) {
@@ -53,7 +81,7 @@ public class LinkCheck {
         }
         for (ClassModel cm : mine.values()) checkClass(cm, mine);
         for (String r : reported) System.out.println(r);
-        System.out.printf("%nresolved: %d, unverified: %d, errors: %d%n", ok, unverified, errors);
+        System.out.printf("%nresolved: %d (%d of them inherited through SeedGenGlobe's own subclasses), unverified: %d, errors: %d%n", ok, inherited, unverified, errors);
         if (errors > 0) System.exit(1);
     }
 
@@ -142,9 +170,57 @@ public class LinkCheck {
         else { unverified++; reported.add("UNVERIFIED type " + owner + "   (from " + from + ")"); }
     }
 
+    /**
+     * For a reference through a class a scanned mod defines: the first class up its superclass chain that the scanned
+     * mods do not define, when no class on the way declares the member itself; null otherwise.
+     */
+    static String inheritedFrom(String owner, String name, String desc) {
+        String current = owner;
+        for (int depth = 0; depth < 32; depth++) {
+            String parent = surfaceSuper.get(current);
+            if (parent == null) return depth == 0 ? null : current;
+            if (surfaceMembers.contains(current + " " + name + " " + desc)) return null;
+            List<String> interfaces = surfaceInterfaces.getOrDefault(current, List.of());
+            for (String i : interfaces) if (surfaceMembers.contains(i + " " + name + " " + desc)) return null;
+            if (parent.isEmpty() || jdk(parent)) return null;
+            current = parent;
+        }
+        return null;
+    }
+
+    /** Whether one of SeedGenGlobe's classes or its interfaces (or theirs) declares the member. */
+    static boolean declaredInMine(ClassModel cm, String name, String desc, boolean method, Map<String, ClassModel> mine, Set<String> visited) {
+        if (!visited.add(cm.thisClass().asInternalName())) return false;
+        if (method) {
+            for (MethodModel m : cm.methods()) if (m.methodName().equalsString(name) && m.methodType().equalsString(desc)) return true;
+        } else {
+            for (FieldModel f : cm.fields()) if (f.fieldName().equalsString(name) && f.fieldType().equalsString(desc)) return true;
+        }
+        for (ClassEntry i : cm.interfaces()) {
+            ClassModel im = mine.get(i.asInternalName());
+            if (im != null && declaredInMine(im, name, desc, method, mine, visited)) return true;
+        }
+        return false;
+    }
+
     static void checkMember(String from, String owner, String name, String desc, boolean method, boolean isStatic, Map<String, ClassModel> mine) {
         if (jdk(owner)) return;
-        if (mine.containsKey(owner)) return;
+        if (mine.containsKey(owner)) {
+            // a member of SeedGenGlobe's own class, or one it inherits: check the latter on the class it comes from
+            String current = owner;
+            Set<String> visited = new HashSet<>();
+            while (mine.containsKey(current)) {
+                ClassModel cm = mine.get(current);
+                if (declaredInMine(cm, name, desc, method, mine, visited)) return;
+                if (cm.superclass().isEmpty()) return;
+                current = cm.superclass().get().asInternalName();
+            }
+            if (jdk(current)) return;
+            int before = ok;
+            checkMember(from, current, name, desc, method, isStatic, mine);
+            if (ok > before) inherited++;
+            return;
+        }
         if (real.containsKey(owner)) {
             String found = resolve(owner, name, desc, method, new HashSet<>());
             if (found == null) { errors++; reported.add("ERROR   " + owner + "." + name + desc + " does not exist   (from " + from + ")"); return; }
