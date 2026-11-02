@@ -25,6 +25,7 @@ interface net/minecraft/core/RegistryAccess extends net/minecraft/core/HolderLoo
 interface net/minecraft/core/HolderLookup$Provider extends net/minecraft/core/HolderGetter$Provider
 interface net/minecraft/core/HolderGetter$Provider
 class net/minecraft/world/level/chunk/LevelChunk extends net/minecraft/world/level/chunk/ChunkAccess
+class net/minecraft/world/level/chunk/ProtoChunk extends net/minecraft/world/level/chunk/ChunkAccess
 class net/minecraft/world/level/chunk/ChunkAccess implements net/minecraft/world/level/BlockGetter
 class net/minecraft/client/player/LocalPlayer extends net/minecraft/client/player/AbstractClientPlayer
 class net/minecraft/client/player/AbstractClientPlayer extends net/minecraft/world/entity/player/Player
