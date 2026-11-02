@@ -224,6 +224,7 @@ public class LinkCheck {
         String self = cm.thisClass().asInternalName();
         for (String target : targets) {
             ClassModel t = real.get(target);
+            if (t == null && target.startsWith("net/minecraft/")) { checkMinecraftMixin(cm, self, target); continue; }
             if (t == null) { errors++; reported.add("ERROR   mixin " + self + " targets missing class " + target); continue; }
             // @Shadow fields
             for (FieldModel f : cm.fields()) {
@@ -259,11 +260,48 @@ public class LinkCheck {
                             MethodTypeDesc hd = m.methodTypeSymbol();
                             boolean returns = !td.returnType().descriptorString().equals("V");
                             String ci = returns ? "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;" : "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
+                            // Mixin accepts the target's parameters followed by the callback, or the callback alone
                             boolean good = hd.parameterCount() == td.parameterCount() + 1 && hd.parameterType(td.parameterCount()).descriptorString().equals(ci);
                             for (int i = 0; good && i < td.parameterCount(); i++) good = hd.parameterType(i).equals(td.parameterType(i));
+                            if (!good && hd.parameterCount() == 1 && hd.parameterType(0).descriptorString().equals(ci)) good = true;
                             if (!good) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + hd.descriptorString() + " does not fit " + target + "." + tm.methodName() + td.descriptorString()); }
                             else { ok++; reported.add("OK      mixin " + self + "." + m.methodName() + " -> " + target + "." + tm.methodName() + td.descriptorString()); }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * A mixin into a Minecraft class, which is not available: each @Inject selector with a full descriptor must match
+     * a method other mods call with that owner, name and descriptor (OK), or it is listed for a manual look (UNVERIFIED).
+     * The handler may take the target's parameters and the callback, or the callback alone.
+     */
+    static void checkMinecraftMixin(ClassModel cm, String self, String target) {
+        for (MethodModel m : cm.methods()) {
+            Optional<RuntimeVisibleAnnotationsAttribute> vis = m.findAttribute(Attributes.runtimeVisibleAnnotations());
+            if (vis.isEmpty()) continue;
+            for (Annotation a : vis.get().annotations()) {
+                if (!a.className().equalsString("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
+                for (AnnotationElement el : a.elements()) {
+                    if (!el.name().equalsString("method") || !(el.value() instanceof AnnotationValue.OfArray arr)) continue;
+                    for (AnnotationValue v : arr.values()) {
+                        if (!(v instanceof AnnotationValue.OfString str)) continue;
+                        String selector = str.stringValue();
+                        int paren = selector.indexOf('(');
+                        if (paren < 0) { unverified++; reported.add("UNVERIFIED mixin " + self + "." + m.methodName() + " injects into " + target + "." + selector + " (no descriptor)"); continue; }
+                        String name = selector.substring(0, paren), desc = selector.substring(paren);
+                        MethodTypeDesc td = MethodTypeDesc.ofDescriptor(desc), hd = m.methodTypeSymbol();
+                        String ci = td.returnType().descriptorString().equals("V") ? "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;" : "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;";
+                        boolean fits = hd.parameterCount() == 1 && hd.parameterType(0).descriptorString().equals(ci);
+                        if (!fits && hd.parameterCount() == td.parameterCount() + 1 && hd.parameterType(td.parameterCount()).descriptorString().equals(ci)) {
+                            fits = true;
+                            for (int i = 0; fits && i < td.parameterCount(); i++) fits = hd.parameterType(i).equals(td.parameterType(i));
+                        }
+                        if (!fits) { errors++; reported.add("ERROR   mixin " + self + "." + m.methodName() + hd.descriptorString() + " does not fit " + target + "." + selector); continue; }
+                        if (seenRefs.contains(target + " " + name + " " + desc)) { ok++; reported.add("OK      mixin " + self + "." + m.methodName() + " -> " + target + "." + selector + " (called by other mods)"); }
+                        else { unverified++; reported.add("UNVERIFIED mixin " + self + "." + m.methodName() + " -> " + target + "." + selector + " (Minecraft method nothing else calls)"); }
                     }
                 }
             }

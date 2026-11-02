@@ -37,17 +37,61 @@ Columns are computed in 2 x 2 quads exactly the way Big Globe's chunk generator 
   (exact on servers and in singleplayer, statistical on multiplayer clients, which do not receive the flower
   configuration). Distant Horizons colours a block by the plants on it, so without this generated LODs looked flatter
   and lighter than LODs of explored chunks, which showed as a square around the spawn chunks.
-- Not included: structures, ores and other features, and anything players built. As you explore, DH replaces LODs
+- Structures (`structures`): Big Globe's obelisks, mega trees, villages, houses, lakes and the rest, both the terrain
+  they shape and the blocks they place, found and built by Big Globe's own structure placement, so they stand where
+  they will stand in real chunks. Every structure appears in LODs up to `structureDetail` (default 5: LOD cells
+  32 blocks wide); two levels coarser still the large ones (lakes, mega trees), and obelisks, which are huge and
+  rare, at every distance. Structures Big Globe tags as underground are left out, as Big Globe does for its own
+  LODs. They need the world seed, so servers and singleplayer have them, client generation in multiplayer does not.
+  `/seedgenglobe debug structures` lists the structures around you.
+- Not included: ores and other small features, mobs, and anything players built. As you explore, DH replaces LODs
   with data from real chunks as usual.
+
+Distant Horizons keeps the LODs it has and only asks for what is missing, so LODs saved before (by an older
+SeedGenGlobe, or before structures were turned on) stay as they are. To regenerate them, close the world and delete
+Distant Horizons' `DistantHorizons.sqlite` file in its save folder (one per dimension, in the dimension's `data`
+folder).
+
+## How fast it generates
+
+Distant Horizons decides which sections it needs; SeedGenGlobe decides in which order and how many run at once. A
+section takes a few CPU-seconds whatever its size (much more with structures far out), so the CPU sets the pace.
+
+- Every section goes through one queue on SeedGenGlobe's own threads, below normal priority. A thread always takes
+  the waiting section nearest to a player, worked out when it takes it, so generation follows you as you move and
+  fixes holes and coarse terrain next to you before it expands outward. Sections Distant Horizons asks for, sections
+  a multiplayer client generates and the Xaero LOD map's own sections share the queue.
+- `cpuLoad` sets the thread count from the CPU's physical cores, like Distant Horizons' own CPU setting: Minimal,
+  Low, Balanced (the default, two cores left for the game), High and Extreme. More threads than cores make every
+  section slower and the server lag without generating any faster. `generatorThreads` sets an exact number instead.
+- On its own, Distant Horizons keeps only its thread count plus one sections in flight, and stops asking while its
+  render loader or file queue holds five tasks per thread, so on machines where it runs few threads it asks for very
+  few sections at a time, and none while it turns finished sections into render data. With `dhRequestBoost` it hands
+  SeedGenGlobe as many sections as SeedGenGlobe's queue holds and keeps asking until its queues hold the
+  `memoryLoad` limit (8, 12 or 20 tasks per thread), back to its own limits while memory is short.
+- Distant Horizons also stops asking while more than 20 LOD updates per thread from loaded chunks wait, which
+  happens when you fly over unexplored land. `dhChunkLodBuilding=false` stops it from building LODs from the chunks
+  players load in dimensions SeedGenGlobe generates, which leaves its threads to SeedGenGlobe; player builds then no
+  longer show in LODs.
+- `yieldToServer` runs fewer sections at once while the server falls behind 20 ticks per second or the heap is nearly
+  full, and speeds up again afterwards.
+- Progress: the overlay (`progressOverlay`) shows sections running and waiting, the speed, how far out LODs and the
+  map are complete and what slows generation down; the chat (`chatProgress`) says when they are complete out to 1,
+  2, 4, 8, ... thousand blocks and when everything is done; and while sections are generated the log gets a summary
+  every minute (`statsLogSeconds`), like `SeedGenGlobe [minecraft:overworld]: last 60 s: 140 started, 138 finished
+  (2.3 per second), 5.8 at a time, 2521 ms per section (terrain 840 ms, structures 1210 ms, ...); ...; complete out
+  to 3,072 of 16,384 blocks`, followed by the threads and what Distant Horizons' queues hold. The first line says
+  when Distant Horizons first asked for sections, and `logSections` logs every section as it starts and finishes.
 
 ## Requirements
 
 - Minecraft 26.1.x on Fabric (built for 26.1.2), Fabric Loader 0.19.5 or newer (0.20.1 works), Fabric API, Java 25
-- Distant Horizons 3.0.x (API 6). Checked against 3.0.3-b; the atlasfix build works the same, since its patch only
-  touches DH's Iris texture code
+- Distant Horizons 3.0.x (API 6). Built and checked against 3.0.3-b with the atlasfix patch (which only touches
+  DH's Iris texture code, so the plain 3.0.3-b works the same). On other versions the generator keeps working; any
+  of SeedGenGlobe's DH mixins that do not fit are left out and listed on the status page
 - Big Globe 6.x (checked against 6.3.0)
-- Optional: Xaero's World Map 1.47.x and Xaero's Minimap 26.6.x (see below), Vertigo, Iris, Sodium, Lithium, C2ME,
-  Noisium, ScalableLux (see Compatibility)
+- Optional: Mod Menu 18.x (the settings screen), Xaero's World Map 1.47.x and Xaero's Minimap 26.6.x (see below),
+  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLux (see Compatibility)
 
 ## Where to install it
 
@@ -65,85 +109,185 @@ On a server with DH, players only ask the server for full-detail sections (64 x 
 *N-sized generation* is turned on, on the server and on the clients (DH config: server > experimental >
 `enableNSizedGeneration`, command name `generation.nSized`). Full-detail sections are still far cheaper with
 SeedGenGlobe than generating chunks, but the large speedup for far terrain comes from coarse sections, so turn the
-option on. SeedGenGlobe logs a reminder and shows one in `/seedgenglobe` while it is off. Singleplayer and client-side
+option on. SeedGenGlobe logs a reminder and shows one on its status page while it is off. Singleplayer and client-side
 generation are not affected by this option.
 
 ## Xaero's World Map and Minimap
 
 Xaero's maps only map chunks the game loads, so they cover your render distance while Distant Horizons shows terrain
 far beyond it. With `xaeroLodMap` SeedGenGlobe also writes the **surface of the whole LOD radius** into Xaero's World
-Map, and the minimap shows it too (its *Use World Map Mod Chunks* option, on by default, draws World Map data).
+Map, and the minimap shows it too (its *Use World Map Mod Chunks* option, on by default, draws World Map data;
+`xaeroMinimapLodMap=false` keeps the minimap to explored land, see below). `xaeroLodMap` can be switched on and off
+while playing.
 
-- The map is computed from Big Globe's terrain scripts with the same samplers as the LODs, trees and ground cover
-  included, on one low-priority background thread. Like LODs it gets coarser with distance: one map pixel per block
-  within 768 blocks, then one per 2, 4, ... up to 64 blocks. Coming closer later refines it.
+- The map is drawn from the sections SeedGenGlobe generates for Distant Horizons, as they are generated: every one
+  is read the way Xaero reads a chunk column and merged into the map, so the map shows exactly the terrain, trees,
+  ground cover and structures of the LODs, at their detail level (finer near you, coarser far away; coming closer
+  refines it), and grows at the pace Distant Horizons generates.
+- Distant Horizons does not generate what it already has, so LODs from earlier sessions, LODs built from explored
+  chunks and LODs downloaded from a Distant Horizons server never pass through SeedGenGlobe. The map computes those
+  areas itself, as sections of its own in the shared queue, nearest to a player first: gaps anywhere within the map
+  radius (far ones quickly at a coarser level first, then refined), and finer detail where the map is coarser than
+  Distant Horizons' detail levels (its horizontal quality setting), the latter only behind the area Distant Horizons
+  is generating at the moment, so it never computes what is about to arrive anyway. While Distant Horizons has
+  sections running, the map uses about half the threads.
+- Near you the map has one pixel per block (`mapFullDetailRadius`, 32 chunks by default) whatever Distant Horizons'
+  detail is there, and so does every coarse or empty tile next to a chunk Xaero mapped itself, so explored land never
+  surrounds a patch of coarse terrain.
 - Each map pixel is what Xaero itself would record for that column (Xaero's own rules for grass, flowers, glass,
   water and ice decide what shows), with **Big Globe's surface biome**, so hovering the map names the biome you would
   find on the ground.
 - Real terrain always wins: Xaero maps a loaded chunk over the LOD tile right away, and LOD tiles are only written
   where Xaero has nothing (or an empty chunk, see Vertigo below). Explored areas and anything players built are
   never touched.
-- Radius: Distant Horizons' render distance, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) are filled
-  nearest first, so the area around you, which is what the minimap shows, comes first. Xaero builds the map textures
-  itself and that sets the pace: expect a 2048 chunk radius (about 13,000 regions) to take hours to complete the
-  first time. SeedGenGlobe spends at most 2 ms per game tick on it.
+- Radius: Distant Horizons' render distance, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) Xaero holds in
+  memory, the minimap's and the open world map's, get new LOD data within a few seconds; other regions are loaded into
+  Xaero for it once their data has stopped changing for a while, nearest first. Xaero builds the map textures itself
+  and that sets the pace for those: expect a 2048 chunk radius (about 13,000 regions) to take hours to complete the
+  first time. SeedGenGlobe spends at most 2 ms per game tick on it, and logs the map's progress every minute.
 - Multiplayer maps (and singleplayer maps with a custom multiworld) are saved by Xaero, so each region is written
   once. Singleplayer maps are rebuilt by Xaero from the world save whenever it loads a region, and Xaero keeps only a
   texture cache of them: SeedGenGlobe hands regions back to Xaero from that cache in later sessions, and puts LOD
   tiles back into regions Xaero rebuilds.
 - Disk: SeedGenGlobe keeps its copy of the map in `.minecraft/seedgenglobe/lodmap/` (up to about 100 MB for a 2048
-  chunk radius). Xaero's own files for the filled regions grow with the radius and can reach a few GB for a 2048
+  chunk radius; each SeedGenGlobe version that changes the map's format starts a new folder there, and older ones
+  can be deleted). Xaero's own files for the filled regions grow with the radius and can reach a few GB for a 2048
   chunk radius; lower `xaeroLodMapRadius` if that matters.
 - With Vertigo, chunks whose surface has not been synced are no longer mapped as empty black chunks (shown at
   y = -1024 with the plains biome of an unsynced section); Xaero maps them once the surface arrives. Such empty chunks
   already in a saved map get LOD terrain until then.
 - Not included: Big Globe's per-position grass and foliage colours. Xaero tints the map per biome, as it does for
   explored chunks.
+- Minimap: with `xaeroMinimapLodMap=false` the minimap leaves out every 64 x 64 block square that holds only LOD
+  tiles, and the World Map keeps showing them. Squares with some explored chunks are drawn whole, so explored land
+  keeps a fringe of LOD terrain at most one square wide.
 
-`/seedgenglobeclient` shows the map's progress.
+The progress overlay, the chat messages and the status page show the map's progress, and the log gets a summary of
+it every minute.
 
 ## Checking that it works
 
 1. Start the world and look for `SeedGenGlobe now generates Distant Horizons LODs for minecraft:overworld` in the log
-   (`... on this client` in multiplayer without a DH server).
-2. `/seedgenglobe` shows generation statistics (sections, ms per section, columns per second) for every dimension.
-3. `/seedgenglobe verify` compares predicted surface heights with the real chunks loaded around you. Expect most
+   (`... on this client` in multiplayer without a DH server), then for the line saying when Distant Horizons first
+   asked for sections.
+2. The progress overlay shows sections running and waiting, the speed and how far out LODs are complete. The status
+   page (the Status button in SeedGenGlobe's settings, through Mod Menu) shows the same per dimension, with the
+   threads, Distant Horizons' queues, the Xaero LOD map and anything that could not be set up;
+   `/seedgenglobe debug status` shows the server's part of it.
+3. `/seedgenglobe debug verify` compares predicted surface heights with the real chunks loaded around you. Expect most
    columns exact or within 2 blocks; trees, structures and player builds account for the rest.
-4. `/seedgenglobe benchmark` times generation on one thread at detail 0, 3 and 6, for example
-   `/seedgenglobe benchmark 32 6`.
+4. `/seedgenglobe debug benchmark` times generation on one thread at detail 0, 3 and 6, for example
+   `/seedgenglobe debug benchmark 32 6`.
 
 ## Commands
 
-| Command | Who | What |
-|---|---|---|
-| `/seedgenglobe` or `/seedgenglobe status` | everyone | settings, per-dimension statistics, detected mods |
-| `/seedgenglobe verify [radiusChunks]` | operators | predicted surface vs. loaded chunks (default radius 8, max 32) |
-| `/seedgenglobe benchmark [sections] [detail]` | operators | generation speed, on a background thread |
-| `/seedgenglobe probe` | operators | the predicted column at your position |
-| `/seedgenglobeclient` | client | what SeedGenGlobe does on this client (multiplayer generation, Vertigo guard, colours, Xaero map) |
+Everything players need is in the settings screen, the progress overlay and the status page. The commands are
+debugging tools for operators (in singleplayer, with cheats allowed):
+
+| Command | What |
+|---|---|
+| `/seedgenglobe debug status` | the server's side of the status page: settings, threads, per-dimension progress and Distant Horizons' queues, detected mods, anything that could not be set up |
+| `/seedgenglobe debug verify [radiusChunks]` | predicted surface vs. loaded chunks (default radius 8, max 32) |
+| `/seedgenglobe debug benchmark [sections] [detail]` | generation speed, on a background thread |
+| `/seedgenglobe debug probe` | the predicted column at your position |
+| `/seedgenglobe debug structures [radiusChunks]` | the nearest structures LODs get around you (default 64 chunks; beyond 128 chunks only large ones, beyond 512 only obelisk-sized ones) |
+
+1.2.0's `/seedgenglobe`, `/seedgenglobe status` and `/seedgenglobeclient` are gone: the status page has their content.
 
 ## Configuration
 
-`config/seedgenglobe.properties`, written with comments on first start. Changes apply when a world or server loads.
+In game: Mod Menu > SeedGenGlobe (the button next to the mod), one page per category, every setting explained in
+its tooltip, and a Status button. Most settings apply at once; the others say in their tooltip, and in the note at
+the bottom of the screen, whether they apply when a world is loaded again or after a restart. Without Mod Menu, edit
+`config/seedgenglobe.properties` (written with comments on first start, read when the game starts).
+
+The CPU load presets give these thread counts. Java only sees logical CPUs (threads the CPU runs at once), so
+SeedGenGlobe counts half of them as physical cores on CPUs with 8 or more:
+
+| `cpuLoad` | Threads | Priority | 16 logical CPUs | 8 logical CPUs | 4 logical CPUs |
+|---|---|---|---|---|---|
+| `minimal` | 1 | lowest | 1 | 1 | 1 |
+| `low` | a quarter of the physical cores | low | 2 | 1 | 1 |
+| `balanced` | physical cores - 2 (at least 1, at most logical - 1) | below normal | 6 | 2 | 2 |
+| `high` | logical - max(2, a quarter of them) | slightly below normal | 12 | 6 | 2 |
+| `extreme` | logical - 1 | normal | 15 | 7 | 3 |
+
+`memoryLoad` sizes what SeedGenGlobe keeps in memory; `auto` picks Low below 4 GB of heap, Medium below 8 GB and High
+above:
+
+| `memoryLoad` | Sections waiting per thread | Structure tiles remembered | LOD map cache | Xaero regions loaded for the map | Distant Horizons queue per thread |
+|---|---|---|---|---|---|
+| `low` | 1 | 4,096 | about 8 MB | 2 | 8 |
+| `medium` | 2 | 16,384 | about 32 MB | 6 | 12 |
+| `high` | 3 | 49,152 | about 64 MB | 10 | 20 |
+
+(A Xaero region Xaero would not have loaded itself takes 10 to 20 MB while SeedGenGlobe fills it. Distant Horizons'
+own queue limit is 5 tasks per thread; the last column applies with `dhRequestBoost`.)
+
+**General**
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | Master switch. |
-| `maxDetailLevel` | `15` | Coarsest DH detail level generated directly (0-15). Lower it only to compare against DH's own downsampling. |
-| `undergroundMode` | `fill` | `none`, `fill`, `carve`, `decorate`, or `bigglobe` (use Big Globe's own DH underground setting). `fill` is fastest and looks the same from above; `carve` and `decorate` cost more and matter only with cave LODs. |
-| `sampleCellCenter` | `true` | Sample the centre of each LOD cell instead of its corner, so coarse LODs are not shifted by half a cell. |
-| `trees` | `true` | Approximate tree canopies. |
-| `groundCover` | `true` | Big Globe's grass, flowers, leaf litter, bushes, sticks and rocks on generated LODs. |
-| `updateParentSections` | `false` | Let each generated section also rewrite its coarser parent sections (Distant Horizons' default). Off, DH builds parents itself, which avoids black holes in the LODs while they are still being built. |
-| `clientGeneration` | `true` | Multiplayer: generate on the client when the server has no DH. |
-| `clientGenerationWithDhServer` | `false` | Multiplayer: generate locally even when the server runs DH (needs synced terrain layers, see above). |
-| `clientThreads` | `0` | Threads for client generation; 0 = DH's thread count, minus one with C2ME or ScalableLux. |
-| `vertigoGuard` | `true` | With Vertigo, keep chunks whose top or bottom was not synced from flattening LODs. |
-| `bigGlobeColors` | `true` | Big Globe's grass, foliage and water colours for LODs. |
-| `xaeroLodMap` | `true` | With Xaero's World Map: map the surface of the whole LOD radius (see above). |
-| `xaeroLodMapRadius` | `0` | Radius of that map in chunks, 0 = Distant Horizons' render distance (max 4096). |
-| `generatorPriority` | `2026` | DH generator override priority. Big Globe's own DH generator uses 10; change this only if another mod uses the same number. |
-| `statsInterval` | `500` | Log a throughput summary every N sections (0 = never). |
+| `enabled` | `true` | Master switch. Off: SeedGenGlobe does nothing and Distant Horizons and Xaero's maps behave as if it were not installed. *Takes effect after a game restart.* |
+| `dhGeneration` | `true` | Generate Distant Horizons LODs for Big Globe dimensions from Big Globe's terrain scripts. Off leaves them to Distant Horizons' own (much slower) generator; the Xaero LOD map still works. *Takes effect when a world is loaded again.* |
+| `dhChunkLodBuilding` | `true` | Let Distant Horizons also build LODs from the real chunks players load, in dimensions SeedGenGlobe generates. While many of those wait, it stops asking SeedGenGlobe for sections. Off frees its threads for SeedGenGlobe, but buildings and other changes players make no longer show in LODs. |
+| `xaeroLodMap` | `true` | Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more; LOD tiles already on the map stay until Xaero maps those chunks. |
+| `xaeroMinimapLodMap` | `true` | Show that LOD terrain on Xaero's Minimap too. Off: the minimap leaves out every 64-block square that has only LOD tiles, so it shows the chunks Xaero mapped itself (with LOD tiles that share a square with them). Only matters while the minimap takes its chunks from the World Map. |
+
+**Performance**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `cpuLoad` | `balanced` | How many threads compute LOD sections and map sections, and at what priority. Balanced leaves two cores for the game; High and Extreme generate faster but the game will stutter more. (`minimal`, `low`, `balanced`, `high`, `extreme`) |
+| `memoryLoad` | `auto` | How much memory SeedGenGlobe keeps for speed: queued sections, remembered structures, map regions in memory, and how far Distant Horizons' queues may grow. Automatic picks from the memory Java was given. (`auto`, `low`, `medium`, `high`) |
+| `yieldToServer` | `true` | Run fewer sections at once while the server cannot keep up 20 ticks per second, and speed up again once it does. |
+| `dhRequestBoost` | `true` | Let Distant Horizons hand SeedGenGlobe as many sections as SeedGenGlobe's queue holds (its own limit is its thread count plus one), and keep asking while its render and file queues are busy, up to the memory load's limit (it stops at 5 tasks per thread). Back to its own limits while memory is short. |
+| `generatorThreads` | `0` | Threads for LOD sections. Automatic follows the CPU load setting. (0-64, 0 = automatic) |
+
+**Xaero's maps**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `xaeroLodMapRadius` | `0` | How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance. (0-4096, 0 = automatic) |
+| `mapFullDetailRadius` | `32` | Within this many chunks of the player, and right next to chunks Xaero has mapped, the LOD map shows one pixel per block. Farther out it gets coarser, like LODs. (0-256, 0 = off) |
+
+**Progress**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `progressOverlay` | `working` | A few lines on screen with what SeedGenGlobe is doing: sections running and waiting, speed, and how far out LODs and the map are complete. (`off`, `working`, `always`) |
+| `overlayPosition` | `top_right` | Screen corner of the progress overlay. (`top_left`, `top_right`, `bottom_left`, `bottom_right`) |
+| `chatProgress` | `milestones` | Milestones: when LODs or the map are complete out to 1, 2, 4, 8, ... thousand blocks, and when all is done. Everything: also when generation starts and resumes. (`off`, `milestones`, `all`) |
+| `statsLogSeconds` | `60` | While sections are generated, log a summary (started and finished sections, speed, time per phase, Distant Horizons' queues) this often. (0-3600, 0 = never) |
+| `logSections` | `false` | Log a line when each section starts and when it finishes. Many lines; for finding out what generation is doing. |
+
+**LOD terrain**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `trees` | `true` | Approximate tree canopies so forests remain visible in the distance. *Takes effect when a world is loaded again.* |
+| `groundCover` | `true` | Big Globe's grass, flowers, leaf litter and similar ground cover on generated LODs, so they match LODs of explored chunks. *Takes effect when a world is loaded again.* |
+| `structures` | `true` | Big Globe's structures in generated LODs (obelisks, mega trees, villages, houses, lakes, ...): the terrain they shape and the blocks they place. Server and singleplayer only. *Takes effect when a world is loaded again.* |
+| `structureDetail` | `5` | Coarsest detail level that gets every structure (5 = LOD cells 32 blocks wide). Two levels coarser still get lakes and mega trees; obelisks are in every LOD. (0-15) *Takes effect when a world is loaded again.* |
+| `undergroundMode` | `fill` | How much of the underground to compute. Fill is fastest and looks the same from above; Big Globe's setting uses Big Globe's own Distant Horizons option. (`none`, `fill`, `carve`, `decorate`, `bigglobe`) *Takes effect when a world is loaded again.* |
+| `bigGlobeColors` | `true` | Tint distant grass, leaves and water with Big Globe's own colour scripts instead of flat per-biome colours. *Takes effect after a game restart.* |
+| `vertigoGuard` | `true` | With Vertigo, keep chunks whose top or bottom sections were not synced from overwriting LODs and Xaero's map. *Takes effect after a game restart.* |
+
+**Multiplayer**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `clientGeneration` | `true` | Multiplayer: generate LODs on this client from the terrain Big Globe syncs, when the server has no Distant Horizons. *Takes effect after a game restart.* |
+| `clientGenerationWithDhServer` | `false` | Multiplayer: generate locally even when the server runs Distant Horizons, instead of downloading LODs from it. *Takes effect when a world is loaded again.* |
+
+**Advanced**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `maxDetailLevel` | `15` | Coarsest Distant Horizons detail level generated directly. LOD columns are 2^n blocks wide. (0-15) *Takes effect when a world is loaded again.* |
+| `sampleCellCenter` | `true` | Sample the centre of each LOD cell instead of its corner. *Takes effect when a world is loaded again.* |
+| `updateParentSections` | `false` | Let generated sections rewrite their coarser parents too (Distant Horizons' default). Off avoids holes while LODs build. *Takes effect when a world is loaded again.* |
+| `generatorPriority` | `2026` | Distant Horizons world generator override priority. Must differ from other generator mods; higher than Big Globe's own (10). (11-1000000) *Takes effect when a world is loaded again.* |
 
 ## Compatibility
 
@@ -155,26 +299,27 @@ Map, and the minimap shows it too (its *Use World Map Mod Chunks* option, on by 
 - **Xaero's World Map / Minimap**: see the section above.
 - **Iris**: LODs carry real block states and biomes, so shader packs get the right DH materials for leaves, water and
   snow. The atlasfix DH build is supported.
-- **C2ME**: SeedGenGlobe never uses Big Globe's chunk worker pool that C2ME drives; LOD columns are computed on DH's
-  world generation threads only.
+- **C2ME**: SeedGenGlobe never uses Big Globe's chunk worker pool that C2ME drives; LOD columns are computed on
+  SeedGenGlobe's own threads. The Balanced CPU load leaves two cores for the game, chunk loading included; choose Low
+  if chunks load slowly while LODs generate.
 - **ScalableLux**: LOD light comes from Big Globe's column data, so distant terrain queues no light engine work.
-  Client generation leaves one thread for chunk loading and lighting when C2ME or ScalableLux are installed.
 - **Noisium, Lithium, Sodium**: no interaction needed. Big Globe does not use the vanilla noise router Noisium
   optimises, SeedGenGlobe touches no game logic Lithium changes, and DH renders LODs itself.
 - **Distant Horizons SeedGen**: it turns itself off in Big Globe dimensions, so the two do not compete.
 - **Voxy**: not supported.
 
-SeedGenGlobe's generator uses only DH's public API. Multiplayer client generation, the Vertigo guard and Big Globe
-colours need small mixins into DH internals, and the Xaero integration small mixins into Xaero's map writers;
-before applying each one SeedGenGlobe checks that every field, method and call it needs exists in the installed
-build, and leaves out (and reports in the status commands) any that do not fit, instead of crashing.
+SeedGenGlobe's generator uses only DH's public API. Multiplayer client generation, the Vertigo guard, Big Globe
+colours, `dhChunkLodBuilding` and `dhRequestBoost` need small mixins into DH internals, the Xaero integration small
+mixins into Xaero's map writers and the minimap, and the structure guard one into Minecraft's structure manager.
+Before applying each DH and Xaero mixin SeedGenGlobe checks that every field, method and call it needs exists in the
+installed build, and leaves out (and reports on the status page) any that do not fit, instead of crashing.
 
 ## Building
 
-The release jar was built with `build-offline.sh`, which compiles against the real Distant Horizons and Big Globe
-jars plus compile-only stubs for Minecraft classes (the build machine had no access to Mojang's or Fabric's
-servers), and was then checked by a bytecode link check against Distant Horizons, Big Globe, Xaero's World Map and
-Minimap and Fabric API, including every mixin target. `tools/offline-build/README.md` explains how.
+The release jar was built with `build-offline.sh`, which compiles against the real Distant Horizons, Big Globe,
+Xaero and Mod Menu jars plus compile-only stubs for Minecraft classes (the build machine had no access to Mojang's or
+Fabric's servers), and was then checked by a bytecode link check against Distant Horizons, Big Globe, Xaero's World
+Map and Minimap and Fabric API, including every mixin target. `tools/offline-build/README.md` explains how.
 
 For normal development use Gradle with Fabric Loom: put the Distant Horizons and Big Globe jars (and optionally
 Vertigo) into `libs/` (see `libs/README.txt`) and run `./gradlew build`. `./gradlew check` also runs the logic
@@ -183,8 +328,11 @@ here, so a first run may need small adjustments.
 
 `test-offline.sh` runs the logic tests without Gradle: ColumnProfile against the data point rules DH enforces and
 Big Globe's light model (including a 20,000 column fuzz test), the tree shape functions, the ground cover decorators
-against Big Globe's chances and DH's 2 x 2 merge, how a column reads on Xaero's map, and the LOD map's region
-bookkeeping.
+against Big Globe's chances and DH's 2 x 2 merge, how a column reads on Xaero's map, the section structures are placed
+into (sample points, kept writes, heightmaps, relighting), how sections of every detail level are merged into map
+regions (against a block-by-block model, with a fuzz test), the LOD map's region bookkeeping, full-detail radius and
+Distant Horizons' detail levels, the section scheduler (nearest first, following the player, cancelling, stopping
+part-way, the CPU and memory presets) and the settings file.
 
 ## License
 

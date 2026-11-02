@@ -23,12 +23,20 @@ def nestedLibraries = files(provider {
 	}
 })
 
+repositories {
+	maven {
+		name = 'TerraformersMC' // Mod Menu
+		url = 'https://maven.terraformersmc.com/releases/'
+	}
+}
+
 sourceSets {
 	main {
 		// compile-time copy of Vertigo's small public API, so Vertigo itself is optional for building (excluded from the jar)
 		java.srcDir 'src/vertigoStubs/java'
 	}
-	// ColumnProfile's and XaeroPixel's logic tests run without Minecraft, against small fakes of the classes they use
+	// the logic tests of ColumnProfile, XaeroPixel, the structure capture view and the LOD map regions run without
+	// Minecraft, against small fakes of the classes they use
 	columnTest {
 		java.srcDir 'src/testFakes/java'
 		java.srcDir layout.buildDirectory.dir('generated/columnTest')
@@ -38,8 +46,14 @@ sourceSets {
 def copyColumnProfile = tasks.register('copyColumnProfileForTest', Copy) {
 	from('src/main/java') {
 		include 'dev/seedgenglobe/terrain/ColumnProfile.java'
+		include 'dev/seedgenglobe/terrain/SampledColumns.java'
+		include 'dev/seedgenglobe/structures/SampleGrid.java'
+		include 'dev/seedgenglobe/structures/CaptureView.java'
 		include 'dev/seedgenglobe/xaero/MapPixel.java'
 		include 'dev/seedgenglobe/xaero/XaeroPixel.java'
+		include 'dev/seedgenglobe/xaero/MapSection.java'
+		include 'dev/seedgenglobe/xaero/LodRegion.java'
+		include 'dev/seedgenglobe/xaero/RegionCanvas.java'
 	}
 	into layout.buildDirectory.dir('generated/columnTest')
 }
@@ -53,6 +67,8 @@ dependencies {
 	compileOnly localMods
 	compileOnly nestedLibraries
 	compileOnly 'org.jetbrains:annotations:26.0.2'
+	// the config screen's entrypoint; Mod Menu stays optional at runtime
+	compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 
 	testCompileOnly localMods
 	testRuntimeOnly localMods
@@ -104,6 +120,20 @@ def xaeroPixelTest = tasks.register('xaeroPixelTest', JavaExec) {
 	mainClass = 'dev.seedgenglobe.xaero.XaeroPixelTest'
 }
 
+def captureViewTest = tasks.register('captureViewTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the section structures are placed into: sample points, kept writes, heightmaps and relit columns.'
+	classpath = sourceSets.columnTest.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.structures.CaptureViewTest'
+}
+
+def lodCanvasTest = tasks.register('lodCanvasTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks how LOD sections of every detail level are merged into LOD map regions, against a block-by-block model.'
+	classpath = sourceSets.columnTest.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.xaero.LodCanvasTest'
+}
+
 def canopyMathTest = tasks.register('canopyMathTest', JavaExec) {
 	group = 'verification'
 	description = 'Sanity checks for the tree canopy shape functions.'
@@ -118,13 +148,28 @@ def groundCoverTest = tasks.register('groundCoverTest', JavaExec) {
 	mainClass = 'dev.seedgenglobe.terrain.GroundCoverTest'
 }
 
+def schedulerTest = tasks.register('schedulerTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the section scheduler (nearest first, weights, aging, cancelling), the CPU and memory presets and the progress counters.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.gen.SchedulerTest'
+	systemProperty 'seedgenglobe.test.quiet', 'true'
+}
+
+def configTest = tasks.register('configTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the settings file: round trip of every option, broken values, clamping and 1.2.0 files.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.config.ConfigTest'
+}
+
 def lodMapGeometryTest = tasks.register('lodMapGeometryTest', JavaExec) {
 	group = 'verification'
-	description = 'Checks the region rings, keys, distances, detail levels and tile rules of the Xaero LOD map.'
+	description = 'Checks the region rings, keys, distances, Distant Horizons\' detail levels and tile rules of the Xaero LOD map.'
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = 'dev.seedgenglobe.xaero.LodMapGeometryTest'
 }
 
 tasks.named('check') {
-	dependsOn columnProfileTest, xaeroPixelTest, canopyMathTest, groundCoverTest, lodMapGeometryTest
+	dependsOn columnProfileTest, xaeroPixelTest, captureViewTest, lodCanvasTest, canopyMathTest, groundCoverTest, lodMapGeometryTest, schedulerTest, configTest
 }

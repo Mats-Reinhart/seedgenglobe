@@ -19,6 +19,7 @@ public class StubGen {
     static final Map<String, Integer> arity = new HashMap<>();
     static final Map<String, String> customSig = new HashMap<>();
     static final Set<String> bare = new HashSet<>();
+    static final Set<String> functional = new HashSet<>();
     static final Map<String, List<String[]>> extraMembers = new HashMap<>();
     static String[] prefixes;
 
@@ -77,20 +78,26 @@ public class StubGen {
                 else if (t[i].startsWith("arity=")) arity.put(t[1], Integer.parseInt(t[i].substring(6)));
                 else if (t[i].startsWith("sig=")) customSig.put(t[1], t[i].substring(4));
                 else if (t[i].equals("bare")) bare.add(t[1]);
+                else if (t[i].equals("functional")) functional.add(t[1]);
                 else if (t[i].equals("enum")) ci.isEnumLike = true;
             }
         }
         // nested classes need InnerClasses attributes on both sides, or javac cannot resolve Outer.Inner
-        for (ClassInfo ci : new ArrayList<>(classes.values())) {
-            if (!wanted(ci.name) || definedInJars.contains(ci.name)) continue;
-            int dollar = ci.name.lastIndexOf('$');
-            if (dollar < 0) continue;
-            String simple = ci.name.substring(dollar + 1);
-            if (simple.isEmpty() || Character.isDigit(simple.charAt(0))) continue;
-            String outer = ci.name.substring(0, dollar);
-            ci.outer = outer;
-            ClassInfo outerInfo = info(outer);
-            outerInfo.inners.add(ci.name);
+        // (repeated until no new outer class turns up, for classes nested more than one level deep)
+        Set<String> linked = new HashSet<>();
+        for (int before = -1; before != classes.size(); ) {
+            before = classes.size();
+            for (ClassInfo ci : new ArrayList<>(classes.values())) {
+                if (!wanted(ci.name) || definedInJars.contains(ci.name) || !linked.add(ci.name)) continue;
+                int dollar = ci.name.lastIndexOf('$');
+                if (dollar < 0) continue;
+                String simple = ci.name.substring(dollar + 1);
+                if (simple.isEmpty() || Character.isDigit(simple.charAt(0))) continue;
+                String outer = ci.name.substring(0, dollar);
+                ci.outer = outer;
+                ClassInfo outerInfo = info(outer);
+                outerInfo.inners.add(ci.name);
+            }
         }
         int count = 0;
         for (ClassInfo ci : classes.values()) {
@@ -292,7 +299,10 @@ public class StubGen {
                 int mf = e.getValue();
                 boolean isStatic = (mf & ClassFile.ACC_STATIC) != 0;
                 if (name.equals("<init>")) { if (itf) continue; mf = ClassFile.ACC_PUBLIC; }
-                if (itf && !isStatic) {
+                if (itf && !isStatic && functional.contains(ci.name)) {
+                    // the single abstract method of a functional interface, so lambdas compile
+                    cb.withMethod(name, mtd, ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT, mb -> {});
+                } else if (itf && !isStatic) {
                     // default methods: compile-only stubs must never force implementors to override anything
                     cb.withMethodBody(name, mtd, ClassFile.ACC_PUBLIC, code -> { code.aconst_null(); code.athrow(); });
                 } else {
