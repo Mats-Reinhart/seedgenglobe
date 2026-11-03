@@ -149,7 +149,7 @@ while playing.
 - Real terrain always wins: Xaero maps a loaded chunk over the LOD tile right away, and LOD tiles are only written
   where Xaero has nothing (or an empty chunk, see Vertigo below). Explored areas and anything players built are
   never touched.
-- Radius: Distant Horizons' render distance, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) Xaero holds in
+- Radius: Distant Horizons' render distance up to 512 chunks, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) Xaero holds in
   memory, the minimap's and the open world map's, get new LOD data within a few seconds; other regions are loaded into
   Xaero for it once their data has stopped changing for a while, nearest first. Xaero builds the map textures itself
   and that sets the pace for those: expect a 2048 chunk radius (about 13,000 regions) to take hours to complete the
@@ -287,7 +287,7 @@ of sections.)
 
 | Key | In game | Default | Meaning |
 |---|---|---|---|
-| `xaeroLodMapRadius` | LOD map radius | `0` | How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance. (0-4096, 0 = automatic) |
+| `xaeroLodMapRadius` | LOD map radius | `0` | How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance up to 512 chunks: filling Xaero's map takes far longer than computing it, so a larger radius keeps it filling for hours. Choose a number to go farther. (0-4096, 0 = automatic) |
 | `mapFullDetailRadius` | Full detail radius | `32` | Within this many chunks of the player, and right next to chunks Xaero has mapped, the LOD map shows one pixel per block. Farther out it gets coarser, like LODs. (0-256, 0 = off) |
 
 **Progress**

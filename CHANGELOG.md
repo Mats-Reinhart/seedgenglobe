@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+### Mod Menu
+- SeedGenGlobe's page in Mod Menu now has working **Website** and **Issues** buttons: Website opens
+  https://github.com/Mats-Reinhart/seedgenglobe and Issues opens https://github.com/Mats-Reinhart/seedgenglobe/issues.
+
+Also contains every 1.3.3 change below.
+
 ## 1.3.3
 
 ### Holes in the LODs while moving
@@ -32,6 +40,9 @@
 ### Xaero's World Map
 - The chat says "Xaero LOD map computed out to ..." instead of "no gaps" / "complete": the map is computed first, and
   filling Xaero's map from it (region by region) takes longer.
+- The automatic LOD map radius (`xaeroLodMapRadius=0`) follows Distant Horizons' render distance only up to 512
+  chunks. Filling Xaero's map is far slower than computing it, so a large Distant Horizons radius kept it filling for
+  hours. A radius set by number is used as before.
 - Generated sections coarser than detail level 6 are no longer fed to the map, which never uses them.
 - The `xaeroLodMap` text now says that a singleplayer map loses LOD tiles wherever Xaero rebuilds a region from the
   world save while the option is off.

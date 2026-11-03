@@ -491,7 +491,7 @@ public final class GlobeConfig {
 			Apply.LIVE, 0, 64, "Automatic", "", c -> c.generatorThreads, (c, v) -> c.generatorThreads = v),
 		// Xaero
 		new IntOption("xaeroLodMapRadius", Category.XAERO, "LOD map radius",
-			"How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance.",
+			"How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance up to 512 chunks: filling Xaero's map takes far longer than computing it, so a larger radius keeps it filling for hours. Choose a number to go farther.",
 			Apply.LIVE, 0, 4096, "Automatic", "chunks", c -> c.xaeroLodMapRadius, (c, v) -> c.xaeroLodMapRadius = v),
 		new IntOption("mapFullDetailRadius", Category.XAERO, "Full detail radius",
 			"Within this many chunks of the player, and right next to chunks Xaero has mapped, the LOD map shows one pixel per block. Farther out it gets coarser, like LODs.",
