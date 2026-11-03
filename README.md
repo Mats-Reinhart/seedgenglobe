@@ -190,10 +190,9 @@ it every minute.
 
 ## Regenerating LODs
 
-To throw away a world's LODs and have them generated again (after changing settings that shape the terrain, or a
-SeedGenGlobe update), use **Regenerate LODs...** on the General page of SeedGenGlobe's settings (singleplayer, with
-the world open), or send `/seedgenglobe regenerate` (operators; it says what will be deleted, and sending it again
-within 30 seconds confirms).
+Regenerating LODs is accessed through the command `/seedgenglobe regenerate` (sending it again
+within 30 seconds confirms the command execution) or through the ModMenu button. It will request to delete that world's LODs and related files.
+The deletion will go through once the world is closed due to restrictions with deleting files of a program that's currently running.
 
 This deletes Distant Horizons' LOD database of every dimension of the world (`DistantHorizons.sqlite` in each
 dimension's `data` folder, with its `-wal`, `-shm` and `-journal` files) and, in singleplayer, SeedGenGlobe's copy of
@@ -207,10 +206,13 @@ locked then is deleted the next time the world loads, before Distant Horizons op
 Distant Horizons asks for every LOD anew. Until you leave, **Keep the LODs (undo)** (the same button) or
 `/seedgenglobe regenerate cancel` takes it back; so does deleting that file.
 
+### Why would you want this?
+
+Debugging, mostly. Or updates to DH, updates to SeedGenGlobe, or to update the LODs with other player's-made terrain.
+
 ## Commands
 
-Everything players need is in the settings screen, the progress overlay and the status page. The commands are
-for operators (in singleplayer, with cheats allowed):
+Commands are usually reserved for debugging reasons. For standard usage it is not recommended you really use commands, and I recommend using ModMenu instead.
 
 | Command | What |
 |---|---|
@@ -222,7 +224,6 @@ for operators (in singleplayer, with cheats allowed):
 | `/seedgenglobe debug probe` | the predicted column at your position |
 | `/seedgenglobe debug structures [radiusChunks]` | the nearest structures LODs get around you (default 64 chunks; beyond 128 chunks only large ones, beyond 512 only obelisk-sized ones) |
 
-1.2.0's `/seedgenglobe`, `/seedgenglobe status` and `/seedgenglobeclient` are gone: the status page has their content.
 
 ## Configuration
 
