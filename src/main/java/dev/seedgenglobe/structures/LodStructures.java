@@ -304,6 +304,8 @@ public final class LodStructures {
 	/** The generator closes: errors from here on come from the server going away and are not logged. */
 	public void close() {
 		this.closing = true;
+		// the structure starts found so far hold their pieces, the level's structure templates and so on
+		this.index.clear();
 	}
 
 	/** Logs once that an ordinary structure set turned out small enough to leave out of coarse LODs. */

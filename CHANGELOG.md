@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.3
+
+### Holes in the LODs while moving
+- Fixed: large holes in the LODs that opened while moving and only closed when you came near. Distant Horizons draws
+  a coarser section in place of four finer ones while any of them is still loading, and after you move away it wants
+  the coarser level there. SeedGenGlobe generated only the sections Distant Horizons asked for at their own level,
+  never those coarser ones, and a section with no data counts as drawable, so it drew nothing over the finer
+  sections that had loaded. Two changes:
+  - An empty coarser section no longer hides finer sections that loaded; only the one still loading is blank, for a
+    moment.
+  - New **Generate parent sections** (`generateParentSections`, Advanced, on): Distant Horizons also asks SeedGenGlobe
+    for those coarser sections, which are then generated directly like any other. About a third more sections; ones
+    already in the database are not generated again. Moving away from an area then finds its coarser level ready,
+    also once Distant Generation is switched off.
+  - While Distant Generation is off, a finer section Distant Horizons wants but nobody can generate any more (walking
+    towards terrain that was generated from farther away) no longer shows as a hole: the coarser terrain around it
+    stays.
+- Fixed: switching Distant Horizons' Distant Generation off and on again in the same session left the dimension
+  without generation until the world was opened again. Distant Horizons closes its generator when generation is
+  switched off and hands the same one back when it is switched on; SeedGenGlobe's generator now only drops the
+  sections it was asked for, and closes for good when the level or the server goes.
+
+### Memory
+- Fixed: every world opened in a game session stayed in memory until the game was closed: its integrated server,
+  client level, Big Globe terrain and structure cache. The chat milestone bookkeeping kept them, and so did Distant
+  Horizons' own registry of world generators, which never lets go of a registered generator. SeedGenGlobe now forgets
+  closed producers and takes its generator back out of that registry when the level goes. Leaving a world also
+  empties the structure cache.
+
+### Xaero's World Map
+- The chat says "Xaero LOD map computed out to ..." instead of "no gaps" / "complete": the map is computed first, and
+  filling Xaero's map from it (region by region) takes longer.
+- Generated sections coarser than detail level 6 are no longer fed to the map, which never uses them.
+- The `xaeroLodMap` text now says that a singleplayer map loses LOD tiles wherever Xaero rebuilds a region from the
+  world save while the option is off.
+
 ## 1.3.2
 
 ### Regenerate LODs

@@ -177,6 +177,11 @@ final class StructureIndex {
 		return this.entries.size();
 	}
 
+	/** Forgets every tile that is done (the generator closed); a lookup still running finishes on its own. */
+	void clear() {
+		this.entries.values().removeIf(entry -> entry.result.isDone());
+	}
+
 	/**
 	 * The structure starts of one structure set whose position lies in a tile, before collision checks.
 	 * Blocks while another thread computes them.

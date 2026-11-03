@@ -36,8 +36,9 @@ import dev.seedgenglobe.terrain.SectionSampler;
  * <p>
  * Every request becomes a job on the {@link SectionScheduler}, which runs the sections nearest to the player first
  * on SeedGenGlobe's own threads. Distant Horizons only withdraws requests it has not handed out yet, so a request
- * stays wanted until it is done; closing the generator stops all of its sections within a fraction of a second
- * (dropped before they start or stopped part-way), before the server takes away what they need. Every section is offered to a {@link SectionListener},
+ * stays wanted until it is done; when Distant Horizons closes its generation queue ({@link #close}) or SeedGenGlobe
+ * shuts the generator down ({@link #shutdown}), its sections stop within a fraction of a second (dropped before they
+ * start or stopped part-way), before the server takes away what they need. Every section is offered to a {@link SectionListener},
  * which is how the Xaero LOD map is drawn from exactly the terrain Distant Horizons receives, as it receives it.
  */
 public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
@@ -70,6 +71,8 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 	private final int priority;
 	private final SectionScheduler.Kind requestKind;
 	private volatile boolean closed;
+	/** Counts the generation queues Distant Horizons closed: sections asked for by an earlier queue are dropped. */
+	private volatile int queueGeneration;
 	private volatile @Nullable SectionListener listener;
 	private volatile @Nullable Runnable onClose;
 	private volatile int listenerFailures;
@@ -170,11 +173,12 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 			future.completeExceptionally(new CancellationException("SeedGenGlobe generator closed"));
 			return future;
 		}
+		int queue = this.queueGeneration;
 		SectionScheduler.get().submit(new SectionScheduler.Job(this.requestKind, this, this.dimensionId, originX, originZ, detailLevel) {
 
 			@Override
 			public boolean cancelled() {
-				return future.isDone() || GlobeWorldGenerator.this.closed;
+				return future.isDone() || GlobeWorldGenerator.this.closed || GlobeWorldGenerator.this.queueGeneration != queue;
 			}
 
 			@Override
@@ -325,11 +329,27 @@ public final class GlobeWorldGenerator implements IDhApiWorldGenerator {
 	public void preGeneratorTaskStart() {}
 
 	/**
-	 * Stops the generator: waiting sections are dropped and running ones stop at their next check (within a fraction
-	 * of a second). Called by Distant Horizons when it closes the level, and by SeedGenGlobe when the server stops.
+	 * Distant Horizons closed its generation queue for this level: its Distant Generation was switched off, or the
+	 * level is closing. The sections that queue asked for are dropped (running ones stop at their next check), but the
+	 * generator stays usable, because Distant Horizons hands this same generator to its next queue when generation is
+	 * switched on again. In 1.3.2 this closed the generator for good, so switching Distant Generation off and on again
+	 * left the dimension without generation until the world was opened again. SeedGenGlobe itself closes the generator
+	 * ({@link #shutdown}) when the level unloads or the server stops.
 	 */
 	@Override
 	public void close() {
+		if (this.closed) return;
+		this.queueGeneration++;
+		int dropped = SectionScheduler.get().cancel(this);
+		SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}]: Distant Horizons closed its generation queue ({} waiting sections dropped); generation goes on when it asks again.", this.progress.name, dropped);
+	}
+
+	/**
+	 * Closes the generator for good: waiting sections are dropped and running ones stop at their next check (within a
+	 * fraction of a second), and the bridge forgets it. Called when the level unloads, when the server stops, and when
+	 * a new generator replaces this one.
+	 */
+	public void shutdown() {
 		if (this.closed) return;
 		this.closed = true;
 		this.listener = null;

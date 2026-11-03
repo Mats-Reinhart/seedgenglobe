@@ -71,6 +71,7 @@ public final class ConfigTest {
 		changed.structures = false;
 		changed.structureDetail = 3;
 		changed.updateParentSections = true;
+		changed.generateParentSections = false;
 		changed.bigGlobeColors = false;
 		changed.vertigoGuard = false;
 		changed.xaeroLodMap = false;
