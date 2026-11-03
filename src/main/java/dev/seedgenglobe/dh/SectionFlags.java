@@ -15,9 +15,14 @@ import dev.seedgenglobe.SeedGenGlobe;
  * draws the parent with three empty quarters, and when it wants the finer level but one child is still missing it
  * hides the three finished children behind the partial parent. While the propagator lags behind generation (which
  * is most of the time on a large render distance) those empty quarters are the black holes that disappear "once
- * everything is done". SeedGenGlobe generates every detail level directly from Big Globe's scripts, so parents
- * never need to be assembled from children; skipping the propagation also saves several database rewrites per
- * generated section. Chunk updates from real terrain keep Distant Horizons' normal behaviour.
+ * everything is done". Skipping the propagation also saves several database rewrites per generated section. Chunk
+ * updates from real terrain keep Distant Horizons' normal behaviour.
+ * <p>
+ * Without the propagation a parent does not exist at all unless it is generated itself, and Distant Horizons only
+ * asks for the sections it wants at their own level, while it draws the parents in place of children that are still
+ * loading. A parent with no data counts as drawable too, so up to 1.3.2 moving around showed holes the size of whole
+ * parents. Since 1.3.3 SeedGenGlobe has those parents generated directly ({@code generateParentSections}) and keeps
+ * empty ones from hiding their children (see {@link StandIns}).
  * <p>
  * {@code applyToParent} is a field of Distant Horizons' internal data source class, not of its API, so this is
  * guarded: if the field ever changes, generation carries on with Distant Horizons' default.

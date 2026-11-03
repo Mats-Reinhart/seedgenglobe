@@ -50,6 +50,7 @@ public final class SeedGenGlobeClient implements ClientModInitializer {
 			ClientGeneration.onDisconnect();
 			VertigoGuard.active = false;
 			if (xaero) dev.seedgenglobe.xaero.XaeroLodMap.onDisconnect();
+			ChatProgress.clear();
 		});
 		ProgressOverlay.register();
 		ChatProgress.register();

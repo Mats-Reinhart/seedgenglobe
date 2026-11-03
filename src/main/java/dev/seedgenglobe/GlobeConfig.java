@@ -70,6 +70,8 @@ public final class GlobeConfig {
 	/** Before structure overriders reshape terrain, compute every value any overrider reads (1.3.0), not just the ones the overriders there read. */
 	public boolean fullStructurePrecompute = false;
 	public boolean updateParentSections = false;
+	/** Let Distant Horizons also ask for the coarser sections it draws in place of finer ones (see {@code StandIns}). */
+	public boolean generateParentSections = true;
 	public boolean bigGlobeColors = true;
 	public boolean vertigoGuard = true;
 
@@ -463,7 +465,7 @@ public final class GlobeConfig {
 			"Let Distant Horizons also build LODs from the real chunks players load, in dimensions SeedGenGlobe generates. While many of those wait, it stops asking SeedGenGlobe for sections. Off frees its threads for SeedGenGlobe, but buildings and other changes players make no longer show in LODs.",
 			Apply.LIVE, c -> c.dhChunkLodBuilding, (c, v) -> c.dhChunkLodBuilding = v),
 		new BoolOption("xaeroLodMap", Category.GENERAL, "Xaero's World Map LOD map",
-			"Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more; LOD tiles already on the map stay until Xaero maps those chunks.",
+			"Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more. On a multiplayer map, LOD tiles already on it stay until Xaero maps those chunks; a singleplayer map loses them wherever Xaero rebuilds a region from the world save.",
 			Apply.LIVE, c -> c.xaeroLodMap, (c, v) -> c.xaeroLodMap = v),
 		new BoolOption("xaeroMinimapLodMap", Category.GENERAL, "Xaero's Minimap LOD map",
 			"Show that LOD terrain on Xaero's Minimap too. Off: the minimap leaves out every 64-block square that has only LOD tiles, so it shows the chunks Xaero mapped itself (with LOD tiles that share a square with them). Only matters while the minimap takes its chunks from the World Map.",
@@ -489,7 +491,7 @@ public final class GlobeConfig {
 			Apply.LIVE, 0, 64, "Automatic", "", c -> c.generatorThreads, (c, v) -> c.generatorThreads = v),
 		// Xaero
 		new IntOption("xaeroLodMapRadius", Category.XAERO, "LOD map radius",
-			"How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance.",
+			"How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance up to 512 chunks: filling Xaero's map takes far longer than computing it, so a larger radius keeps it filling for hours. Choose a number to go farther.",
 			Apply.LIVE, 0, 4096, "Automatic", "chunks", c -> c.xaeroLodMapRadius, (c, v) -> c.xaeroLodMapRadius = v),
 		new IntOption("mapFullDetailRadius", Category.XAERO, "Full detail radius",
 			"Within this many chunks of the player, and right next to chunks Xaero has mapped, the LOD map shows one pixel per block. Farther out it gets coarser, like LODs.",
@@ -553,8 +555,11 @@ public final class GlobeConfig {
 			"Before structures reshape the terrain around them, compute every column value any of Big Globe's structure overriders reads, as Big Globe's chunk generator does (1.3.0). Off computes only what the overriders of the structures nearby read, which saves time next to structures; turn on if LODs there differ from the real terrain.",
 			Apply.REJOIN, c -> c.fullStructurePrecompute, (c, v) -> c.fullStructurePrecompute = v),
 		new BoolOption("updateParentSections", Category.ADVANCED, "Update parent sections",
-			"Let generated sections rewrite their coarser parents too (Distant Horizons' default). Off avoids holes while LODs build.",
+			"Let generated sections also be merged into their coarser parents (Distant Horizons' default). Such a parent holds only part of its area until all of it is generated, and Distant Horizons draws it in place of finer sections still loading. Off avoids those holes; Generate parent sections makes the parents whole instead.",
 			Apply.REJOIN, c -> c.updateParentSections, (c, v) -> c.updateParentSections = v),
+		new BoolOption("generateParentSections", Category.ADVANCED, "Generate parent sections",
+			"Let Distant Horizons also ask for the coarser sections it draws in place of finer ones while those load and after you move away, in dimensions SeedGenGlobe generates. Off: those stay empty, so moving shows holes that only close when you come near. Costs about a third more sections.",
+			Apply.LIVE, c -> c.generateParentSections, (c, v) -> c.generateParentSections = v),
 		new IntOption("generatorPriority", Category.ADVANCED, "DH override priority",
 			"Distant Horizons world generator override priority. Must differ from other generator mods; higher than Big Globe's own (10).",
 			Apply.REJOIN, 11, 1_000_000, null, "", c -> c.generatorPriority, (c, v) -> c.generatorPriority = v)
@@ -723,6 +728,7 @@ public final class GlobeConfig {
 			+ ", groundCover=" + this.groundCover
 			+ ", structures=" + (this.structures ? "up to detail " + this.structureDetail : "off")
 			+ ", parentUpdates=" + this.updateParentSections
+			+ ", parentSections=" + this.generateParentSections
 			+ ", cellCentre=" + this.sampleCellCenter
 			+ (this.structures && this.fullStructurePrecompute ? " (full precompute)" : "")
 			+ ", cpu=" + this.cpuLoad.id() + (this.generatorThreads > 0 ? " (" + this.generatorThreads + " threads)" : "")

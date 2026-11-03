@@ -20,6 +20,9 @@ final class MapFeed implements GlobeWorldGenerator.SectionListener {
 
 	@Override
 	public void sectionGenerated(GlobeWorldGenerator generator, int originX, int originZ, int detail, SampledColumns columns) {
+		// coarser than the map ever computes (Distant Horizons' far parent sections): the map has finer data there or
+		// computes it itself, and taking these first would have Xaero's map filled twice
+		if (detail > LodMapBuilder.MAX_DETAIL) return;
 		if (!this.builder.wants(this.target, originX, originZ, detail)) return;
 		MapSection section = new MapSection(this.target, detail, originX, originZ, true);
 		section.fill(columns, this.target.rules());

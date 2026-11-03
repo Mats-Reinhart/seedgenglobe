@@ -7,6 +7,10 @@
 	"authors": [
 		"Mats Reinhart"
 	],
+	"contact": {
+		"homepage": "https://github.com/Mats-Reinhart/seedgenglobe",
+		"issues": "https://github.com/Mats-Reinhart/seedgenglobe/issues"
+	},
 	"license": "MIT",
 	"icon": "assets/seedgenglobe/icon.png",
 	"environment": "*",
