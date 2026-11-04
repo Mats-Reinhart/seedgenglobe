@@ -100,7 +100,7 @@ section takes a few CPU-seconds whatever its size (much more with structures far
   of SeedGenGlobe's DH mixins that do not fit are left out and listed on the status page
 - Big Globe 6.x (checked against 6.3.0)
 - Optional: Mod Menu 18.x (the settings screen), Xaero's World Map 1.47.x and Xaero's Minimap 26.6.x (see below),
-  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLux (see Compatibility)
+  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLu
 
 ## Where to install it
 
@@ -382,9 +382,3 @@ part-way, the CPU and memory presets) and the settings file.
 SeedGenGlobe is MIT licensed (see `LICENSE`). It contains no code from Big Globe, Distant Horizons, Vertigo or
 Xaero's mods. Xaero's World Map and Minimap are All Rights Reserved by xaero96; SeedGenGlobe only calls them at
 runtime when they are installed.
-
-Big Globe is All Rights Reserved by Builderb0y, and its license does not allow using its Java code in other
-projects without permission. SeedGenGlobe is built against Big Globe's classes and calls them at runtime, like any
-add-on, so ask Builderb0y before publishing SeedGenGlobe publicly. Never re-host the Big Globe jar.
-
-Distant Horizons is LGPL-3.0. If you distribute a modified DH build such as the atlasfix, include its notes with it.
