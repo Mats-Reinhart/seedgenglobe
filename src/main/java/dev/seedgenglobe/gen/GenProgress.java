@@ -86,6 +86,7 @@ public final class GenProgress {
 	final AtomicInteger running = new AtomicInteger(), waiting = new AtomicInteger();
 	private final AtomicBoolean announced = new AtomicBoolean();
 	private volatile long lastActivityAt;
+	private volatile boolean closed;
 
 	// sections running at once, integrated over time
 	private final Object integratorLock = new Object();
@@ -124,9 +125,18 @@ public final class GenProgress {
 		return this.group;
 	}
 
-	/** Stops reporting (the generator closed). */
+	/**
+	 * Stops reporting (the generator closed) and lets go of the group: the generator or the map's target, which hold the
+	 * level and its terrain, so nothing that still knows this progress keeps those in memory.
+	 */
 	public void close() {
+		this.closed = true;
+		this.group = null;
 		LIVE.remove(this);
+	}
+
+	public boolean isClosed() {
+		return this.closed;
 	}
 
 	public static List<GenProgress> live() {

@@ -151,13 +151,21 @@ public final class XaeroLodMap {
 		return lines;
 	}
 
-	/** The radius in blocks: SeedGenGlobe's setting, or Distant Horizons' render distance. */
+	/**
+	 * The automatic radius stops here (chunks). Filling Xaero's map is much slower than computing it: about 40 regions
+	 * of 512 blocks a minute in a singleplayer test, so following a Distant Horizons radius of 4,048 chunks (some
+	 * 50,000 regions) kept the map filling, and short of most of them, for as long as the game ran. 512 chunks is about
+	 * 800 regions. A radius set by number is used as it is.
+	 */
+	static final int AUTO_MAX_CHUNKS = 512;
+
+	/** The radius in blocks: SeedGenGlobe's setting, or Distant Horizons' render distance up to {@link #AUTO_MAX_CHUNKS}. */
 	static int radiusBlocks() {
 		int chunks = GlobeConfig.get().xaeroLodMapRadius;
 		if (chunks <= 0) {
 			try {
 				Integer value = DhApi.Delayed.configs != null ? DhApi.Delayed.configs.graphics().chunkRenderDistance().getValue() : null;
-				chunks = value != null && value > 0 ? value : 256;
+				chunks = value != null && value > 0 ? Math.min(value, AUTO_MAX_CHUNKS) : 256;
 			}
 			catch (RuntimeException | LinkageError error) {
 				chunks = 256;

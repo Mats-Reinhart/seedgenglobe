@@ -100,7 +100,7 @@ section takes a few CPU-seconds whatever its size (much more with structures far
   of SeedGenGlobe's DH mixins that do not fit are left out and listed on the status page
 - Big Globe 6.x (checked against 6.3.0)
 - Optional: Mod Menu 18.x (the settings screen), Xaero's World Map 1.47.x and Xaero's Minimap 26.6.x (see below),
-  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLux (see Compatibility)
+  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLu
 
 ## Where to install it
 
@@ -149,7 +149,7 @@ while playing.
 - Real terrain always wins: Xaero maps a loaded chunk over the LOD tile right away, and LOD tiles are only written
   where Xaero has nothing (or an empty chunk, see Vertigo below). Explored areas and anything players built are
   never touched.
-- Radius: Distant Horizons' render distance, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) Xaero holds in
+- Radius: Distant Horizons' render distance up to 512 chunks, or `xaeroLodMapRadius` chunks. Regions (512 x 512 blocks) Xaero holds in
   memory, the minimap's and the open world map's, get new LOD data within a few seconds; other regions are loaded into
   Xaero for it once their data has stopped changing for a while, nearest first. Xaero builds the map textures itself
   and that sets the pace for those: expect a 2048 chunk radius (about 13,000 regions) to take hours to complete the
@@ -190,10 +190,9 @@ it every minute.
 
 ## Regenerating LODs
 
-To throw away a world's LODs and have them generated again (after changing settings that shape the terrain, or a
-SeedGenGlobe update), use **Regenerate LODs...** on the General page of SeedGenGlobe's settings (singleplayer, with
-the world open), or send `/seedgenglobe regenerate` (operators; it says what will be deleted, and sending it again
-within 30 seconds confirms).
+Regenerating LODs is accessed through the command `/seedgenglobe regenerate` (sending it again
+within 30 seconds confirms the command execution) or through the ModMenu button. It will request to delete that world's LODs and related files.
+The deletion will go through once the world is closed due to restrictions with deleting files of a program that's currently running.
 
 This deletes Distant Horizons' LOD database of every dimension of the world (`DistantHorizons.sqlite` in each
 dimension's `data` folder, with its `-wal`, `-shm` and `-journal` files) and, in singleplayer, SeedGenGlobe's copy of
@@ -207,10 +206,13 @@ locked then is deleted the next time the world loads, before Distant Horizons op
 Distant Horizons asks for every LOD anew. Until you leave, **Keep the LODs (undo)** (the same button) or
 `/seedgenglobe regenerate cancel` takes it back; so does deleting that file.
 
+### Why would you want this?
+
+Debugging, mostly. Or updates to DH, updates to SeedGenGlobe, or to update the LODs with other player's-made terrain.
+
 ## Commands
 
-Everything players need is in the settings screen, the progress overlay and the status page. The commands are
-for operators (in singleplayer, with cheats allowed):
+Commands are usually reserved for debugging reasons. For standard usage it is not recommended you really use commands, and I recommend using ModMenu instead.
 
 | Command | What |
 |---|---|
@@ -222,7 +224,6 @@ for operators (in singleplayer, with cheats allowed):
 | `/seedgenglobe debug probe` | the predicted column at your position |
 | `/seedgenglobe debug structures [radiusChunks]` | the nearest structures LODs get around you (default 64 chunks; beyond 128 chunks only large ones, beyond 512 only obelisk-sized ones) |
 
-1.2.0's `/seedgenglobe`, `/seedgenglobe status` and `/seedgenglobeclient` are gone: the status page has their content.
 
 ## Configuration
 
@@ -269,7 +270,7 @@ of sections.)
 | `enabled` | Enabled / Disabled (after the page buttons) | `true` | Master switch for everything SeedGenGlobe does: Distant Horizons LODs, multiplayer generation, the Xaero LOD maps, the Vertigo guard, Big Globe colours, progress and LOD regeneration. Off: SeedGenGlobe does nothing, and Distant Horizons and Xaero's maps behave as if it were not installed (a LOD regeneration confirmed before still completes). *Takes effect after a game restart.* |
 | `dhGeneration` | Distant Horizons LODs | `true` | Generate Distant Horizons LODs for Big Globe dimensions from Big Globe's terrain scripts. Off leaves them to Distant Horizons' own (much slower) generator; the Xaero LOD map still works. *Takes effect when a world is loaded again.* |
 | `dhChunkLodBuilding` | DH LODs from loaded chunks | `true` | Let Distant Horizons also build LODs from the real chunks players load, in dimensions SeedGenGlobe generates. While many of those wait, it stops asking SeedGenGlobe for sections. Off frees its threads for SeedGenGlobe, but buildings and other changes players make no longer show in LODs. |
-| `xaeroLodMap` | Xaero's World Map LOD map | `true` | Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more; LOD tiles already on the map stay until Xaero maps those chunks. |
+| `xaeroLodMap` | Xaero's World Map LOD map | `true` | Map the surface of the whole LOD radius on Xaero's World Map, from Big Globe's terrain scripts. Real chunks replace it as soon as Xaero maps them. Off stops mapping more. On a multiplayer map, LOD tiles already on it stay until Xaero maps those chunks; a singleplayer map loses them wherever Xaero rebuilds a region from the world save. |
 | `xaeroMinimapLodMap` | Xaero's Minimap LOD map | `true` | Show that LOD terrain on Xaero's Minimap too. Off: the minimap leaves out every 64-block square that has only LOD tiles, so it shows the chunks Xaero mapped itself (with LOD tiles that share a square with them). Only matters while the minimap takes its chunks from the World Map. |
 
 **Performance**
@@ -287,7 +288,7 @@ of sections.)
 
 | Key | In game | Default | Meaning |
 |---|---|---|---|
-| `xaeroLodMapRadius` | LOD map radius | `0` | How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance. (0-4096, 0 = automatic) |
+| `xaeroLodMapRadius` | LOD map radius | `0` | How far the LOD map reaches, in chunks. Automatic follows Distant Horizons' render distance up to 512 chunks: filling Xaero's map takes far longer than computing it, so a larger radius keeps it filling for hours. Choose a number to go farther. (0-4096, 0 = automatic) |
 | `mapFullDetailRadius` | Full detail radius | `32` | Within this many chunks of the player, and right next to chunks Xaero has mapped, the LOD map shows one pixel per block. Farther out it gets coarser, like LODs. (0-256, 0 = off) |
 
 **Progress**
@@ -327,7 +328,8 @@ of sections.)
 | `maxDetailLevel` | Coarsest detail level | `15` | Coarsest Distant Horizons detail level generated directly (0-15). LOD columns are 2^n blocks wide. (0-15) *Takes effect when a world is loaded again.* |
 | `sampleCellCenter` | Sample cell centres | `true` | Sample the centre of each LOD cell instead of its corner. *Takes effect when a world is loaded again.* |
 | `fullStructurePrecompute` | Full structure precompute | `false` | Before structures reshape the terrain around them, compute every column value any of Big Globe's structure overriders reads, as Big Globe's chunk generator does (1.3.0). Off computes only what the overriders of the structures nearby read, which saves time next to structures; turn on if LODs there differ from the real terrain. *Takes effect when a world is loaded again.* |
-| `updateParentSections` | Update parent sections | `false` | Let generated sections rewrite their coarser parents too (Distant Horizons' default). Off avoids holes while LODs build. *Takes effect when a world is loaded again.* |
+| `updateParentSections` | Update parent sections | `false` | Let generated sections also be merged into their coarser parents (Distant Horizons' default). Such a parent holds only part of its area until all of it is generated, and Distant Horizons draws it in place of finer sections still loading. Off avoids those holes; Generate parent sections makes the parents whole instead. *Takes effect when a world is loaded again.* |
+| `generateParentSections` | Generate parent sections | `true` | Let Distant Horizons also ask for the coarser sections it draws in place of finer ones while those load and after you move away, in dimensions SeedGenGlobe generates. Off: those stay empty, so moving shows holes that only close when you come near. Costs about a third more sections. |
 | `generatorPriority` | (file only) | `2026` | Distant Horizons world generator override priority. Must differ from other generator mods; higher than Big Globe's own (10). (11-1000000) *Takes effect when a world is loaded again.* |
 
 ## Compatibility
@@ -380,9 +382,3 @@ part-way, the CPU and memory presets) and the settings file.
 SeedGenGlobe is MIT licensed (see `LICENSE`). It contains no code from Big Globe, Distant Horizons, Vertigo or
 Xaero's mods. Xaero's World Map and Minimap are All Rights Reserved by xaero96; SeedGenGlobe only calls them at
 runtime when they are installed.
-
-Big Globe is All Rights Reserved by Builderb0y, and its license does not allow using its Java code in other
-projects without permission. SeedGenGlobe is built against Big Globe's classes and calls them at runtime, like any
-add-on, so ask Builderb0y before publishing SeedGenGlobe publicly. Never re-host the Big Globe jar.
-
-Distant Horizons is LGPL-3.0. If you distribute a modified DH build such as the atlasfix, include its notes with it.

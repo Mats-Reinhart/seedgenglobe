@@ -69,6 +69,33 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 			DH + "core/render/QuadTree/LodQuadTree#updateAllRenderSections#*#" + DH + "core/render/QuadTree/LodQuadTree.threadPoolCanAcceptWorldGenTasks()Z",
 			DH + "core/render/QuadTree/LodQuadTree#fullDataSourceProvider#L" + DH + "core/file/fullDatafile/V2/FullDataSourceProviderV2;",
 		}),
+		Map.entry("LodStandInMixin", new String[] {
+			DH + "core/render/QuadTree/LodQuadTree#updateAllRenderSections#(L" + DH + "core/pos/blockPos/DhBlockPos2D;)V",
+			DH + "core/render/QuadTree/LodQuadTree#onDetailLevelTooLow#*#" + DH + "core/render/QuadTree/LodRenderSection.canRender()Z",
+			DH + "core/render/QuadTree/LodQuadTree#onDesiredDetailLevel#*#" + DH + "core/render/QuadTree/LodRenderSection.canRender()Z",
+			DH + "core/render/QuadTree/LodQuadTree#level#L" + DH + "core/level/IDhClientLevel;",
+			DH + "core/render/QuadTree/LodQuadTree#fullDataSourceProvider#L" + DH + "core/file/fullDatafile/V2/FullDataSourceProviderV2;",
+			DH + "core/level/IDhClientLevel#getClientLevelWrapper#()L" + DH + "core/wrapperInterfaces/world/IClientLevelWrapper;",
+			DH + "core/render/QuadTree/LodRenderSection#renderBufferContainer#L" + DH + "core/dataObjects/render/bufferBuilding/LodBufferContainer;",
+			DH + "core/dataObjects/render/bufferBuilding/LodBufferContainer#vboBufferCount#()I",
+		}),
+		Map.entry("LodParentRequestMixin", new String[] {
+			DH + "core/render/QuadTree/LodQuadTree#updateAllRenderSections#*#" + DH + "core/render/QuadTree/QuadTreeTickNodeHolder.getWorldGenNodesNearToFar(L" + DH + "core/pos/blockPos/DhBlockPos2D;)Ljava/util/ArrayList;",
+			DH + "core/render/QuadTree/LodQuadTree#fullDataSourceProvider#L" + DH + "core/file/fullDatafile/V2/FullDataSourceProviderV2;",
+			DH + "core/render/QuadTree/LodQuadTree#level#L" + DH + "core/level/IDhClientLevel;",
+			DH + "core/render/QuadTree/LodRenderSection#queuedMissingSectionsForRetrieval#Z",
+			DH + "core/util/objects/quadTree/QuadTree#tryGetNode#(J)L" + DH + "core/util/objects/quadTree/QuadNode;",
+			DH + "core/util/objects/quadTree/QuadTree#treeRootDetailLevel#B",
+			DH + "core/util/objects/quadTree/QuadNode#sectionPos#J",
+			DH + "core/util/objects/quadTree/QuadNode#value#Ljava/lang/Object;",
+			DH + "core/pos/DhSectionPos#getParentPos#(J)J",
+			DH + "core/pos/DhSectionPos#getDetailLevel#(J)B",
+		}),
+		Map.entry("WorldGeneratorInjectorMixin", new String[] {
+			DH + "coreapi/DependencyInjection/WorldGeneratorInjector#worldGeneratorByLevelWrapper#Ljava/util/HashMap;",
+			DH + "coreapi/DependencyInjection/OverrideInjector#get#(Ljava/lang/Class;)L" + DH + "api/interfaces/override/IDhApiOverrideable;",
+			DH + "coreapi/DependencyInjection/OverrideInjector#unbind#(Ljava/lang/Class;L" + DH + "api/interfaces/override/IDhApiOverrideable;)V",
+		}),
 		Map.entry("ClientBlockStateColorCacheMixin", new String[] {
 			DH + "common/wrappers/block/ClientBlockStateColorCache#getColor#(L" + DH + "common/wrappers/block/BiomeWrapper;L" + DH + "core/dataObjects/fullData/sources/FullDataSourceV2;L" + DH + "core/pos/blockPos/DhBlockPos;)I",
 			DH + "common/wrappers/block/ClientBlockStateColorCache#clientLevelWrapper#L" + DH + "core/wrapperInterfaces/world/IClientLevelWrapper;",
@@ -131,6 +158,8 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 			case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> config.clientGeneration;
 			case "SharedApiMixin" -> true; // dhChunkLodBuilding can be switched off at any time
 			case "WorldGenerationQueueMixin", "GeneratedFullDataSourceProviderMixin", "LodQuadTreeMixin" -> true; // so can dhRequestBoost
+			case "LodStandInMixin", "WorldGeneratorInjectorMixin" -> true;
+			case "LodParentRequestMixin" -> true; // generateParentSections can be switched at any time
 			case "StructureManagerCaptureMixin" -> config.structures;
 			case "ClientBlockStateColorCacheMixin" -> config.bigGlobeColors;
 			case "XaeroMapWriterMixin" -> ModCompat.XAERO_WORLD_MAP && ModCompat.VERTIGO && config.vertigoGuard;
@@ -161,6 +190,9 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 				case "DhClientLevelMixin", "RemoteWorldRetrievalQueueMixin", "NetworkRequestQueueMixin" -> "multiplayer client generation";
 				case "SharedApiMixin" -> "turning off Distant Horizons' LODs from loaded chunks, and the Vertigo guard";
 				case "WorldGenerationQueueMixin", "GeneratedFullDataSourceProviderMixin", "LodQuadTreeMixin" -> "letting Distant Horizons hand SeedGenGlobe more sections at once (dhRequestBoost)";
+				case "LodStandInMixin" -> "keeping empty LOD sections from hiding finer ones that loaded (holes while moving)";
+				case "LodParentRequestMixin" -> "generating the coarser LOD sections Distant Horizons draws while finer ones load (generateParentSections)";
+				case "WorldGeneratorInjectorMixin" -> "letting go of a closed world's generator, so the world does not stay in memory";
 				case "StructureManagerCaptureMixin" -> "keeping LOD structures from asking the real level about structures";
 				case "ClientBlockStateColorCacheMixin" -> "Big Globe colours for LODs";
 				case "XaeroMapWriterMixin", "XaeroMinimapWriterMixin" -> "keeping Vertigo's partly synced chunks off Xaero's map";

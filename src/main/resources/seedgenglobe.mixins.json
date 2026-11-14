@@ -8,7 +8,8 @@
 		"SharedApiMixin",
 		"StructureManagerCaptureMixin",
 		"WorldGenerationQueueMixin",
-		"GeneratedFullDataSourceProviderMixin"
+		"GeneratedFullDataSourceProviderMixin",
+		"WorldGeneratorInjectorMixin"
 	],
 	"client": [
 		"DhClientLevelMixin",
@@ -20,6 +21,8 @@
 		"XaeroLodTileMixin",
 		"XaeroMinimapLodMixin",
 		"LodQuadTreeMixin",
+		"LodStandInMixin",
+		"LodParentRequestMixin",
 		"ModMenuCreditsMixin"
 	],
 	"injectors": {

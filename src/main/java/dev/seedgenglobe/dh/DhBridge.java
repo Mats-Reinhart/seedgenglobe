@@ -14,6 +14,7 @@ import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiLevelLo
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiLevelUnloadEvent;
 import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhApiEventParam;
 import com.seibel.distanthorizons.api.objects.DhApiResult;
+import com.seibel.distanthorizons.coreapi.DependencyInjection.WorldGeneratorInjector;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
@@ -65,7 +66,7 @@ public final class DhBridge {
 	 */
 	public static void onServerStopping() {
 		List<GlobeWorldGenerator> generators = serverGenerators();
-		for (GlobeWorldGenerator generator : generators) generator.close();
+		for (GlobeWorldGenerator generator : generators) generator.shutdown();
 		long deadline = System.currentTimeMillis() + 10_000L;
 		for (GlobeWorldGenerator generator : generators) {
 			long left = deadline - System.currentTimeMillis();
@@ -123,7 +124,7 @@ public final class DhBridge {
 						if (candidate.level.getWrappedMcObject() == level) generator = candidate;
 					}
 				}
-				if (generator != null) generator.close();
+				if (generator != null) generator.shutdown();
 				if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
 					dev.seedgenglobe.client.ClientGeneration.onLevelUnload(event.value.levelWrapper);
 				}
@@ -162,13 +163,14 @@ public final class DhBridge {
 		GlobeWorldGenerator globe = new GlobeWorldGenerator(wrapper, terrain, dimension, false, wrapper.hasSkyLight(), wrapper.hasCeiling(), dimension, ground, structures);
 		// an earlier generator for the same level (a reload): close it, so it stops and lets go of its old level
 		for (Map.Entry<IDhApiLevelWrapper, GlobeWorldGenerator> entry : SERVER_GENERATORS.entrySet()) {
-			if (entry.getValue().dimensionId.equals(dimension)) entry.getValue().close();
+			if (entry.getValue().dimensionId.equals(dimension)) entry.getValue().shutdown();
 		}
 		boolean generate = GlobeConfig.get().dhGeneration;
 		if (!generate || register(wrapper, globe)) {
 			SERVER_GENERATORS.put(wrapper, globe);
 			globe.onClose(() -> {
 				SERVER_GENERATORS.remove(wrapper, globe);
+				if (generate) unregister(wrapper, globe);
 				SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] closed: {}", globe.progress.name, globe.progress.summary());
 			});
 			dev.seedgenglobe.gen.SectionScheduler.get().configure();
@@ -257,6 +259,21 @@ public final class DhBridge {
 			return false;
 		}
 		return true;
+	}
+
+	/**
+	 * Takes a generator that was shut down back out of Distant Horizons' registry ({@code WorldGeneratorInjectorMixin}),
+	 * so neither it nor the stopped level it was registered for stays in memory for the rest of the game session.
+	 */
+	static void unregister(IDhApiLevelWrapper wrapper, GlobeWorldGenerator generator) {
+		try {
+			if ((Object)(WorldGeneratorInjector.INSTANCE) instanceof DhInjectorHook injector && !injector.seedgenglobe$unbind(wrapper, generator)) {
+				SeedGenGlobe.LOGGER.debug("SeedGenGlobe [{}]: the generator was no longer registered with Distant Horizons", generator.progress.name);
+			}
+		}
+		catch (RuntimeException | LinkageError error) {
+			SeedGenGlobe.LOGGER.debug("SeedGenGlobe [{}]: could not unregister the generator from Distant Horizons", generator.progress.name, error);
+		}
 	}
 
 	static @Nullable Holder<Biome> plains(ServerLevel level) {

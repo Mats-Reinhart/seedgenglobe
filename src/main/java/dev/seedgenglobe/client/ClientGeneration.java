@@ -101,7 +101,7 @@ public final class ClientGeneration {
 		GlobeWorldGenerator generator = state.generator;
 		if (generator != null) {
 			SeedGenGlobe.LOGGER.info("SeedGenGlobe [{}] closed: {}", generator.progress.name, generator.progress.summary());
-			generator.close();
+			generator.shutdown();
 		}
 		state.queue = null;
 		state.generator = null;
@@ -197,6 +197,11 @@ public final class ClientGeneration {
 	public static boolean shouldGenerate(DhClientLevel level, @Nullable ClientNetworkState network) {
 		if (network != null) return false; // keep DH's own answer when a DH server is connected
 		return queueFor(level, null) != null && distantGenerationEnabled();
+	}
+
+	/** Whether SeedGenGlobe, not the network, answers this level's section requests ({@code LodParentRequestMixin}). */
+	public static boolean answersLocally(DhClientLevel level, @Nullable ClientNetworkState network) {
+		return queueFor(level, network) != null;
 	}
 
 	public static @Nullable CompletableFuture<DataSourceRetrievalResult> submit(DhClientLevel level, @Nullable ClientNetworkState network, long sectionPos, byte requiredDetail) {

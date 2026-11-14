@@ -24,6 +24,10 @@ final class ChatProgress {
 	static final long DONE_AFTER_NANOS = 60_000_000_000L;
 	static final long COOLDOWN_NANOS = 5_000_000_000L;
 
+	/**
+	 * Per producer that posted something. Entries of closed producers are dropped: in 1.3.2 they stayed, and through
+	 * the producer's generator or map target each world opened in a game session stayed in memory.
+	 */
 	private static final Map<GenProgress, long[]> STATE = new ConcurrentHashMap<>();
 
 	private ChatProgress() {}
@@ -32,10 +36,17 @@ final class ChatProgress {
 		GenProgress.LISTENERS.add(ChatProgress::onEvent);
 	}
 
+	/** Leaving a world: forget every producer. */
+	static void clear() {
+		STATE.clear();
+	}
+
 	private static void onEvent(GenProgress.Event event) {
 		GlobeConfig.ChatMode mode = GlobeConfig.get().chatProgress;
 		if (mode == GlobeConfig.ChatMode.OFF) return;
 		GenProgress progress = event.progress();
+		if (progress.isClosed()) return;
+		STATE.keySet().removeIf(GenProgress::isClosed);
 		long now = System.nanoTime();
 		// [0] = when the current run started, [1] = last message
 		long[] state = STATE.computeIfAbsent(progress, key -> new long[] { now, 0L });
@@ -46,12 +57,13 @@ final class ChatProgress {
 				if (mode != GlobeConfig.ChatMode.ALL) return;
 				text = progress.map ? "computing the Xaero LOD map" : (event.type() == GenProgress.EventType.STARTED ? "generating LODs" : "generating LODs again");
 			}
-			case MILESTONE -> text = (progress.map ? "Xaero LOD map has no gaps out to " : "LODs complete out to ") + GlobeConfig.ProgressUnit.current().format(event.radius());
+			case MILESTONE -> text = (progress.map ? "Xaero LOD map computed out to " : "LODs complete out to ") + GlobeConfig.ProgressUnit.current().format(event.radius());
 			case DONE -> {
 				if (now - state[0] < DONE_AFTER_NANOS && mode != GlobeConfig.ChatMode.ALL) return;
 				int target = progress.targetRadius();
 				String radius = target > 0 ? " out to " + GlobeConfig.ProgressUnit.current().format(target) : "";
-				text = progress.map ? "Xaero LOD map is complete" + radius : "LODs are complete" + radius + String.format(Locale.ROOT, " (%,d sections)", progress.finished());
+				// the map's sections are computed; Xaero's map is filled from them afterwards, region by region
+				text = progress.map ? "Xaero LOD map computed" + radius + "; filling Xaero's map from it can take a while longer" : "LODs are complete" + radius + String.format(Locale.ROOT, " (%,d sections)", progress.finished());
 			}
 			default -> {
 				return;
