@@ -52,3 +52,34 @@ which also reads Distant Horizons' internal server world, level and repository c
 whether their connections are closed (all resolved against the real Distant Horizons jar): 1813 resolved (60
 inherited), the same 14 unverified, 0 errors. `hierarchy.txt` gained `ConfirmScreen`, fastutil's `BooleanConsumer`
 (functional) and `IntegratedServer` for it. `tools/SettingsTable.java` prints the README's settings tables from the option list.
+
+Up to 1.4.0, `LinkCheck` counted a member it did not find in a Distant Horizons, Big Globe or Fabric API class as
+found once the search reached `java.lang.Object` (any name and descriptor), so a missing member of those jars was
+never reported. Since 1.5.0 a JDK class only has the members reflection finds in it, its superclasses and its
+interfaces (constructors: its own, by descriptor).
+
+## PortCheck: does a built jar link on another Minecraft version?
+
+`java PortCheck.java [--quiet] <mod.jar> <jar...>` (JDK 25 or newer runs the single source file directly) checks a
+built jar against the real jars of one environment: the Minecraft jar of that version, its libraries (the ones its
+launcher profile lists), Fabric Loader and Mixin, and the mods. Nothing is taken on trust from other mods' references:
+every class, field and method SeedGenGlobe's bytecode uses outside its own classes must exist there or in the running
+JDK, found the way the JVM resolves it (class, superclasses, then interfaces), static or not as the instruction
+expects, a class or an interface as the instruction expects, and not private. Mixins are checked against their real
+targets: target classes, `@Shadow` fields and methods, `@Inject` methods (and that the handler takes the target's
+parameters and the callback), `@At("INVOKE")` calls, and MixinExtras `@WrapOperation` calls and handlers. Last, the
+requirement strings of `GlobeMixinPlugin` are read from its constant pool and checked against the same jars, which
+shows which mixins the plugin would leave out there. Members looked up by name at runtime (`ClientScreens`'s method
+handles, for example) are not seen and need a manual look with `javap`.
+
+For 1.5.0 (13,945 references and mixin points per run):
+
+| Environment | Missing or wrong | Plugin requirements |
+|---|---|---|
+| Minecraft 26.1.2, Fabric API 0.155.3, Mod Menu 18.0.2, Distant Horizons 3.0.3-b atlasfix, Big Globe 6.4.0-MC26.1.2, Xaero's World Map 1.47.2 / Minimap 26.6.2, Vertigo 1.2.7-MC26.1.2 | 1 (below) | 54 of 54 met |
+| Minecraft 26.2, Fabric API 0.161.0+26.2, Mod Menu 20.0.3, Distant Horizons 3.0.3-b atlasfix (its API, as no 3.0.x exists for 26.2), Big Globe 6.4.0-MC26.2, Xaero's World Map 1.47.1 / Minimap 26.6.1 for 26.2, Vertigo 1.2.7-MC26.2 | 1 (below) | 54 of 54 met |
+| The same with Distant Horizons 3.3.3-26.2 | 6 | 51 of 54: `NetworkRequestQueueMixin`, `SharedApiMixin` and `ClientBlockStateColorCacheMixin` are left out, which covers the three mixin findings; the other two are `Config.Server.Experimental` (read in a `catch (LinkageError)`) and `DhSectionPos.ICancelablePrimitiveLongConsumer` (only reached through the left-out queue mixin) |
+
+The one finding in every environment is the structure guard's `@Inject` selector
+`StructureManager.getStructureWithPieceAt(BlockPos, ResourceKey)`, an overload neither 26.1.2 nor 26.2 has. It is one
+of five selectors of a `require = 0` injection whose other four exist, so Mixin only leaves that one out (as in 1.4.0).

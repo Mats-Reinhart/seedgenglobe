@@ -1,4 +1,4 @@
-## version: 1.4.0
+## version: 1.5.0
 
 You will use distant horizons v3.0.3 with the custom patched atlas fix when referring to distant horizons.
 

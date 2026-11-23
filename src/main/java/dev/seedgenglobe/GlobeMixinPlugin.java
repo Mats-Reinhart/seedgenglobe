@@ -52,6 +52,8 @@ public final class GlobeMixinPlugin implements IMixinConfigPlugin {
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#networkState#L" + DH + "core/multiplayer/client/ClientNetworkState;",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#getWaitingTaskCount#()I",
 			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#getInProgressTaskCount#()I",
+			// Distant Horizons 3.3 (the first one for Minecraft 26.2) takes an IPrimitiveLongConsumer here, which the handler does not fit
+			DH + "core/multiplayer/client/AbstractFullDataNetworkRequestQueue#removeRetrievalRequestIf#(L" + DH + "core/pos/DhSectionPos$ICancelablePrimitiveLongConsumer;)V",
 		}),
 		Map.entry("SharedApiMixin", new String[] {
 			DH + "core/api/internal/SharedApi#applyChunkUpdate#(L" + DH + "core/wrapperInterfaces/chunk/IChunkWrapper;L" + DH + "core/wrapperInterfaces/world/ILevelWrapper;)V",

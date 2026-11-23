@@ -37,9 +37,9 @@ final class RegenerateLods {
 			return ConfigScreen.tooltip(button, "LOD regeneration is scheduled: this world's LODs are deleted when you leave it."
 				+ "\n\nPress to keep them instead.");
 		}
-		Button button = Button.builder(Component.literal("Regenerate LODs..."), pressed -> minecraft.setScreen(new ConfirmScreen(
+		Button button = Button.builder(Component.literal("Regenerate LODs..."), pressed -> ClientScreens.open(minecraft, new ConfirmScreen(
 			confirmed -> {
-				minecraft.setScreen(screen);
+				ClientScreens.open(minecraft, screen);
 				if (confirmed) server.execute(() -> report(minecraft, screen, LodRegeneration.schedule(server, "the config screen")));
 			},
 			Component.literal("Regenerate the LODs of this world?"),
@@ -60,7 +60,7 @@ final class RegenerateLods {
 		minecraft.execute(() -> {
 			try {
 				if (minecraft.player != null) minecraft.player.sendSystemMessage(Component.literal(reply.message()));
-				if (minecraft.screen == screen) screen.refresh();
+				if (ClientScreens.current(minecraft) == screen) screen.refresh();
 			}
 			catch (RuntimeException exception) {
 				SeedGenGlobe.LOGGER.debug("SeedGenGlobe: could not show the LOD regeneration message", exception);

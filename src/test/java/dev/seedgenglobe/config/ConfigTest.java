@@ -46,7 +46,7 @@ public final class ConfigTest {
 		}
 		// comments are wrapped: join their lines before looking for phrases
 		String text = Files.readString(file, StandardCharsets.UTF_8).replace("\n# ", " ");
-		check(text.contains("configVersion=3"), "the file has a version");
+		check(text.contains("configVersion=4"), "the file has a version");
 		check(text.contains("Takes effect when a world is loaded again."), "comments say when changes apply");
 		check(text.contains("Values: minimal | low | balanced | high | extreme."), "choices are listed");
 
@@ -62,6 +62,8 @@ public final class ConfigTest {
 		changed.generatorThreads = 5;
 		changed.threadPriority = GlobeConfig.ThreadPriority.LOWER;
 		changed.fullStructurePrecompute = true;
+		changed.skipCaveOverriders = false;
+		changed.earlyBiomeCheck = false;
 		changed.progressUnit = GlobeConfig.ProgressUnit.BLOCKS;
 		changed.maxDetailLevel = 9;
 		changed.undergroundMode = GlobeConfig.UndergroundMode.CARVE;
@@ -133,6 +135,22 @@ public final class ConfigTest {
 		check(GlobeConfig.option("yieldToServer").label.equals("Server tps priority"), "yieldToServer is called Server tps priority");
 		check(new GlobeConfig().progressUnit == GlobeConfig.ProgressUnit.CHUNKS, "progress counts chunks by default");
 		check(new GlobeConfig().threadPriority == GlobeConfig.ThreadPriority.AUTO && !new GlobeConfig().fullStructurePrecompute, "1.3.1 defaults");
+		check(new GlobeConfig().skipCaveOverriders && new GlobeConfig().earlyBiomeCheck, "1.5.0 defaults");
+		// a 1.4.0 file has neither 1.5.0 key: both stay on
+		Properties older = new Properties();
+		older.setProperty("configVersion", "3");
+		older.setProperty("fullStructurePrecompute", "false");
+		GlobeConfig fromOlder = new GlobeConfig();
+		read.invoke(fromOlder, older);
+		check(fromOlder.skipCaveOverriders && fromOlder.earlyBiomeCheck, "1.4.0 files get the 1.5.0 defaults");
+		// the summary names structure settings that differ from their defaults
+		check(new GlobeConfig().summary().contains("structures=up to detail 5, "), "default structure settings add nothing: " + new GlobeConfig().summary());
+		GlobeConfig kept = new GlobeConfig();
+		kept.skipCaveOverriders = false;
+		kept.earlyBiomeCheck = false;
+		check(kept.summary().contains("structures=up to detail 5 (cave overriders kept, no early biome check)"), "non-default structure settings are named: " + kept.summary());
+		kept.fullStructurePrecompute = true;
+		check(kept.summary().contains("structures=up to detail 5 (full precompute, no early biome check)"), "full precompute stands for keeping every overrider: " + kept.summary());
 
 		steps();
 		units();

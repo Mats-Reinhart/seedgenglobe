@@ -111,6 +111,6 @@ public final class StatusScreen extends Screen {
 
 	@Override
 	public void onClose() {
-		Minecraft.getInstance().setScreen(this.parent);
+		ClientScreens.open(Minecraft.getInstance(), this.parent);
 	}
 }

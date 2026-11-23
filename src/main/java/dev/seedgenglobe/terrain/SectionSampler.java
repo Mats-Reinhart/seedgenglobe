@@ -41,6 +41,12 @@ public final class SectionSampler implements SampledColumns {
 
 	public final GlobeTerrain terrain;
 	private final QuadColumn quad;
+	/**
+	 * The four columns' block segments, reused for every quad (cleared, keeping their arrays) instead of four new
+	 * lists per quad as in Big Globe's own generator: Minecraft 26.3 pools its terrain buffers the same way. Each
+	 * profile copies what it needs before the next quad.
+	 */
+	private final QuadList lists = new QuadList();
 	private final ColumnProfile[] profiles = new ColumnProfile[WIDTH * WIDTH];
 	private final BlockState air = Blocks.AIR.defaultBlockState();
 	private final @Nullable CanopyModel canopy;
@@ -181,8 +187,7 @@ public final class SectionSampler implements SampledColumns {
 						excluded += spent;
 						if (phases != null) phases[Phase.STRUCTURE_TERRAIN.ordinal()] += spent;
 					}
-					QuadList lists = new QuadList();
-					lists.createNew(genMinY, genMaxY);
+					QuadList lists = this.emptyLists(genMinY, genMaxY);
 					QuadHolder.generate(this.quad, lists, this.terrain.layer);
 					this.finishColumn(this.quad.object00, lists, 0, relX,     relZ,     levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
 					this.finishColumn(this.quad.object01, lists, 1, relX + 1, relZ,     levelMinY, levelMaxY, topSkyLight, originX, originZ, detail);
@@ -268,6 +273,24 @@ public final class SectionSampler implements SampledColumns {
 
 	/** Time spent in tree and ground cover observers during the column loop, moved out of the terrain phase. */
 	private long observeNanos;
+
+	/**
+	 * The reused segment lists, empty, for a generator height of [minY, maxY). A list holds nothing but its segments
+	 * and its bounds, so clearing one leaves it exactly like a new one.
+	 */
+	private QuadList emptyLists(int minY, int maxY) {
+		QuadList lists = this.lists;
+		if (lists.object00 == null || lists.object00.minY() != minY || lists.object00.maxY() != maxY) {
+			lists.createNew(minY, maxY);
+		}
+		else {
+			lists.object00.clear();
+			lists.object01.clear();
+			lists.object10.clear();
+			lists.object11.clear();
+		}
+		return lists;
+	}
 
 	/**
 	 * Computes the single column at (x, z) at full resolution, without tree canopies.

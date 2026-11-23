@@ -247,7 +247,12 @@ public class LinkCheck {
     static String resolve(String owner, String name, String desc, boolean method, Set<String> visited) {
         if (!visited.add(owner)) return null;
         ClassModel cm = real.get(owner);
-        if (cm == null) return jdk(owner) ? (owner.equals("java/lang/Object") || jdkHas(owner, name, desc, method) ? owner : null) : "external:" + owner;
+        // up to 1.4.0 any member reached java/lang/Object and counted as found there, so a member missing from a
+        // Distant Horizons or Big Globe class was never reported: a JDK class has only the members reflection finds
+        if (cm == null) {
+            if (!jdk(owner)) return "external:" + owner;
+            return jdkHas(owner, name, desc, method) ? owner : null;
+        }
         if (method) {
             for (MethodModel m : cm.methods()) if (m.methodName().equalsString(name) && m.methodType().equalsString(desc)) return owner;
         } else {
@@ -267,16 +272,35 @@ public class LinkCheck {
         return external;
     }
 
+    /** Whether a JDK class declares or inherits the member (constructors: declares), public or not. */
     static boolean jdkHas(String owner, String name, String desc, boolean method) {
-        if (!method) return false;
         try {
             Class<?> c = Class.forName(owner.replace('/', '.'), false, LinkCheck.class.getClassLoader());
-            for (var m : c.getMethods()) {
-                if (m.getName().equals(name) && MethodTypeDesc.of(ClassDesc.ofDescriptor(m.getReturnType().descriptorString()), Arrays.stream(m.getParameterTypes()).map(p -> ClassDesc.ofDescriptor(p.descriptorString())).toArray(ClassDesc[]::new)).descriptorString().equals(desc)) return true;
+            if (method && name.equals("<init>")) {
+                for (var k : c.getDeclaredConstructors()) if (descriptor(k.getParameterTypes(), void.class).equals(desc)) return true;
+                return false;
             }
-            if (method && name.equals("<init>")) return true;
+            List<Class<?>> chain = new ArrayList<>();
+            for (Class<?> k = c; k != null; k = k.getSuperclass()) chain.add(k);
+            for (int i = 0; i < chain.size(); i++) {
+                for (Class<?> face : chain.get(i).getInterfaces()) if (!chain.contains(face)) chain.add(face);
+            }
+            if (c.isInterface()) chain.add(Object.class);
+            for (Class<?> k : chain) {
+                if (method) {
+                    for (var m : k.getDeclaredMethods()) if (m.getName().equals(name) && descriptor(m.getParameterTypes(), m.getReturnType()).equals(desc)) return true;
+                } else {
+                    for (var f : k.getDeclaredFields()) if (f.getName().equals(name) && f.getType().descriptorString().equals(desc)) return true;
+                }
+            }
         } catch (Throwable ignored) {}
         return false;
+    }
+
+    static String descriptor(Class<?>[] parameters, Class<?> result) {
+        StringBuilder builder = new StringBuilder("(");
+        for (Class<?> p : parameters) builder.append(p.descriptorString());
+        return builder.append(')').append(result.descriptorString()).toString();
     }
 
     // ------------------------------------------------------------------ mixins

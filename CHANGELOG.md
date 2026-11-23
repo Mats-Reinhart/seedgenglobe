@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.5.0
+
+### Big Globe 6.4.0
+- Checked against Big Globe 6.4.0 (both builds, for Minecraft 26.1.2 and 26.2): every class, field and method
+  SeedGenGlobe uses is there, and the scripts it mirrors (ground cover decorators, world traits, the structure
+  overriders below) are unchanged. 1.4.0 already runs on it; nothing had to change. Built against 6.4.0 now.
+
+### Minecraft 26.2
+- The same jar now also loads on Minecraft 26.2 (`minecraft` `>=26.1 <26.3`). 26.2 moved three things SeedGenGlobe's
+  screens use: opening a screen (`Minecraft.setScreen` is now `Minecraft.gui.setScreen`), the open screen
+  (`Minecraft.screen` is now `Minecraft.gui.screen()`) and whether the HUD is hidden with F1 (`Options.hideGui` is now
+  `Minecraft.gui.hud.isHidden()`). SeedGenGlobe looks them up by name once, so the settings screen, the status page,
+  the LOD regeneration prompt and the progress overlay work on both versions.
+- Everything else links against Minecraft 26.2, Fabric API 0.161, Mod Menu 20.0.3, Big Globe 6.4.0 for 26.2,
+  Xaero's World Map and Minimap for 26.2 and Vertigo 1.2.7 for 26.2.
+- **Distant Horizons 3.0.3 does not exist for Minecraft 26.2**: its first build for 26.2 is 3.1.0-b. With Distant
+  Horizons 3.3.3, three of SeedGenGlobe's mixins into its internals no longer fit and are left out (and listed on the
+  status page): the queue integration of multiplayer client generation, the gate behind `dhChunkLodBuilding` and the
+  Vertigo guard, and Big Globe colours. The generator itself uses only Distant Horizons' public API. Distant Horizons
+  3.3.3 also refuses to load next to Vertigo. Only 3.0.3 is supported and checked.
+- The multiplayer queue mixin now checks the exact signature of the method it hooks before it is applied, like the
+  other two, so a Distant Horizons build where it differs leaves it out instead of failing to apply it.
+
+### Faster structure terrain
+- Near villages, houses, campfires, lakes, wells and windmills, Big Globe raises its cave noise in the 16 blocks under
+  the surface so no cave opens beneath them. Before an overrider may change cave noise, Big Globe computes it for the
+  whole column, and in a 1.4.0 test that was a third of all generation time (1.2 ms for every four columns near a
+  structure). LODs that are not carved (the default Fill underground) never read cave noise: Big Globe's cave carver
+  only runs where its hints say carve. These overriders are now left out of LODs that are not carved, but only when
+  they are exactly the scripts SeedGenGlobe was checked against, and only when the cave carver is the only terrain
+  layer that reads cave noise. New **Skip cave-only overriders** (`skipCaveOverriders`, Advanced, on); Full structure
+  precompute turns it off. The status page says how many quads of columns did without them.
+- Ocean monuments: before Minecraft samples a possible monument's surroundings (225 biome columns for every
+  candidate chunk, most of them on land), SeedGenGlobe checks whether the centre column of the chunk, where Big
+  Globe checks the monument's biome in the end, has a biome the monument allows at any height. This is the early biome
+  check Minecraft 26.3 added before structures work out their heights and pieces, brought to 26.1 and 26.2. The same
+  monuments, found faster. New **Early monument biome check** (`earlyBiomeCheck`, Advanced, on).
+- Each sampler reuses its four block segment lists for every pair of columns instead of making new ones, as Minecraft
+  26.3 pools its terrain buffers.
+
+### Other
+- The C2ME line of the detected mods (log and status page) no longer says LOD columns run on Big Globe's chunk worker
+  pool: they run on SeedGenGlobe's own threads.
+- The settings summary in the log lists the structure settings that differ from their defaults next to
+  `structures=`.
+- Link check tools: `tools/offline-build/PortCheck.java` checks a built jar against the real jars of a Minecraft
+  version (Minecraft included) and the mixin plugin's requirements; `LinkCheck` no longer counts a member missing from
+  a Distant Horizons or Big Globe class as found on `java.lang.Object`.
+
 ## 1.4.0
 
 ### Mod Menu

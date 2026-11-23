@@ -177,6 +177,13 @@ def structureSizeTest = tasks.register('structureSizeTest', JavaExec) {
 	mainClass = 'dev.seedgenglobe.structures.StructureSizeTest'
 }
 
+def caveOverridersTest = tasks.register('caveOverridersTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the cave-only structure overriders LODs leave out against the Big Globe jar in libs/, and that its terrain layers read cave noise only when carving.'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'dev.seedgenglobe.structures.CaveOverridersTest'
+}
+
 def lodRegenerationTest = tasks.register('lodRegenerationTest', JavaExec) {
 	group = 'verification'
 	description = 'Checks what LOD regeneration deletes: only Distant Horizons databases in the world folder and the named Xaero LOD map folders.'
@@ -186,5 +193,5 @@ def lodRegenerationTest = tasks.register('lodRegenerationTest', JavaExec) {
 }
 
 tasks.named('check') {
-	dependsOn columnProfileTest, xaeroPixelTest, captureViewTest, lodCanvasTest, canopyMathTest, groundCoverTest, lodMapGeometryTest, schedulerTest, configTest, structureSizeTest, lodRegenerationTest
+	dependsOn columnProfileTest, xaeroPixelTest, captureViewTest, lodCanvasTest, canopyMathTest, groundCoverTest, lodMapGeometryTest, schedulerTest, configTest, structureSizeTest, caveOverridersTest, lodRegenerationTest
 }

@@ -68,7 +68,7 @@ public final class ConfigScreen extends Screen {
 		// header: the Status button in the top right corner (the title is drawn in extractRenderState)
 		int statusWidth = Math.max(44, Math.min(70, this.width / 4));
 		this.addRenderableWidget(tooltip(
-			Button.builder(Component.literal("Status..."), pressed -> minecraft.setScreen(new StatusScreen(this)))
+			Button.builder(Component.literal("Status..."), pressed -> ClientScreens.open(minecraft, new StatusScreen(this)))
 				.bounds(this.width - statusWidth - 6, 4, statusWidth, BUTTON_HEIGHT).build(),
 			"What SeedGenGlobe is doing right now."
 		));
@@ -271,6 +271,6 @@ public final class ConfigScreen extends Screen {
 
 	@Override
 	public void onClose() {
-		Minecraft.getInstance().setScreen(this.parent);
+		ClientScreens.open(Minecraft.getInstance(), this.parent);
 	}
 }

@@ -5,7 +5,7 @@
 # Mojang's brigadier (compiled from source) and generated compile-only stubs for Minecraft classes.
 set -euo pipefail
 
-VERSION="${VERSION:-1.4.0+mc26.1.2}"
+VERSION="${VERSION:-1.5.0+mc26.1.2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-/home/claude/work}"
 JAVAC="${JAVAC:-/usr/lib/jvm/java-25-openjdk-amd64/bin/javac}"
@@ -23,7 +23,7 @@ find "$HERE/stubs" "$HERE/src/vertigoStubs/java" -name '*.java' > "$BUILD/stub-s
 
 # 2. classpath: hand stubs, brigadier, real mod jars, Fabric API modules, generated Minecraft stubs (last)
 CP="$BUILD/stubs:$WORK/brigadier-classes"
-CP="$CP:$WORK/libs/DistantHorizons-3.0.3-b-26.1.2-atlasfix.jar:$WORK/libs/BigGlobe-6.3.0-MC26.1.2.jar"
+CP="$CP:$WORK/libs/DistantHorizons-3.0.3-b-26.1.2-atlasfix.jar:$WORK/libs/BigGlobe-6.4.0-MC26.1.2.jar"
 CP="$CP:$WORK/libs/xaeroworldmap-fabric-26.1.2-1.47.2.jar:$WORK/libs/xaerominimap-fabric-26.1.2-26.6.2.jar:$WORK/libs/modmenu-18.0.2.jar"
 for jar in "$WORK"/nested/*.jar; do CP="$CP:$jar"; done
 CP="$CP:$WORK/stubgen/out"

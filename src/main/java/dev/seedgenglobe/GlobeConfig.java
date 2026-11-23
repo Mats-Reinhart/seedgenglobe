@@ -31,8 +31,8 @@ import dev.seedgenglobe.gen.MemoryLoad;
 public final class GlobeConfig {
 
 	public static final String FILE_NAME = "seedgenglobe.properties";
-	/** 2: SeedGenGlobe 1.3.0 (CPU and memory load presets; generatorThreads=-1 is gone). 3: 1.3.1 (new keys only). */
-	static final int CONFIG_VERSION = 3;
+	/** 2: SeedGenGlobe 1.3.0 (CPU and memory load presets; generatorThreads=-1 is gone). 3: 1.3.1, 4: 1.5.0 (new keys only). */
+	static final int CONFIG_VERSION = 4;
 
 	private static volatile GlobeConfig current = new GlobeConfig();
 	private static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
@@ -69,6 +69,10 @@ public final class GlobeConfig {
 	public int structureDetail = 5;
 	/** Before structure overriders reshape terrain, compute every value any overrider reads (1.3.0), not just the ones the overriders there read. */
 	public boolean fullStructurePrecompute = false;
+	/** Leave out Big Globe's structure overriders that only keep caves away from structures, where LODs are not carved (1.5.0). */
+	public boolean skipCaveOverriders = true;
+	/** Rule out ocean monument chunks by the biomes of their centre column before their surroundings are sampled (1.5.0). */
+	public boolean earlyBiomeCheck = true;
 	public boolean updateParentSections = false;
 	/** Let Distant Horizons also ask for the coarser sections it draws in place of finer ones (see {@code StandIns}). */
 	public boolean generateParentSections = true;
@@ -554,6 +558,12 @@ public final class GlobeConfig {
 		new BoolOption("fullStructurePrecompute", Category.ADVANCED, "Full structure precompute",
 			"Before structures reshape the terrain around them, compute every column value any of Big Globe's structure overriders reads, as Big Globe's chunk generator does (1.3.0). Off computes only what the overriders of the structures nearby read, which saves time next to structures; turn on if LODs there differ from the real terrain.",
 			Apply.REJOIN, c -> c.fullStructurePrecompute, (c, v) -> c.fullStructurePrecompute = v),
+		new BoolOption("skipCaveOverriders", Category.ADVANCED, "Skip cave-only overriders",
+			"Next to villages, houses, campfires, lakes, wells and windmills, Big Globe raises its cave noise under the surface so no cave opens beneath them. Computing that noise was a third of all generation time near structures, yet LODs that are not carved (the Fill underground) never read it. On: those overriders are left out of LODs that are not carved, but only when they are exactly the scripts SeedGenGlobe was checked against and Big Globe's cave carver is the only terrain layer that reads cave noise. Off runs them as 1.4.0 did. Full structure precompute turns this off.",
+			Apply.REJOIN, c -> c.skipCaveOverriders, (c, v) -> c.skipCaveOverriders = v),
+		new BoolOption("earlyBiomeCheck", Category.ADVANCED, "Early monument biome check",
+			"Before Minecraft samples the surroundings of a possible ocean monument (225 biome columns for every candidate chunk), check that the centre column of its chunk, where Big Globe checks the monument's biome in the end, has a biome the monument allows at some height, like the early biome checks of Minecraft 26.3. The same monuments, found faster on land. Off: every candidate is sampled as in 1.4.0.",
+			Apply.REJOIN, c -> c.earlyBiomeCheck, (c, v) -> c.earlyBiomeCheck = v),
 		new BoolOption("updateParentSections", Category.ADVANCED, "Update parent sections",
 			"Let generated sections also be merged into their coarser parents (Distant Horizons' default). Such a parent holds only part of its area until all of it is generated, and Distant Horizons draws it in place of finer sections still loading. Off avoids those holes; Generate parent sections makes the parents whole instead.",
 			Apply.REJOIN, c -> c.updateParentSections, (c, v) -> c.updateParentSections = v),
@@ -720,18 +730,26 @@ public final class GlobeConfig {
 		throw new IllegalArgumentException(key);
 	}
 
+	/** The structure settings that differ from their defaults, in brackets, or nothing. */
+	private String structureFlags() {
+		List<String> flags = new ArrayList<>();
+		if (this.fullStructurePrecompute) flags.add("full precompute");
+		else if (!this.skipCaveOverriders) flags.add("cave overriders kept");
+		if (!this.earlyBiomeCheck) flags.add("no early biome check");
+		return flags.isEmpty() ? "" : " (" + String.join(", ", flags) + ")";
+	}
+
 	/** Short description of the settings that shape generation, for the log and the status screen. */
 	public String summary() {
 		return "maxDetail=" + this.maxDetailLevel
 			+ ", underground=" + this.undergroundMode.id()
 			+ ", trees=" + this.trees
 			+ ", groundCover=" + this.groundCover
-			+ ", structures=" + (this.structures ? "up to detail " + this.structureDetail : "off")
+			+ ", structures=" + (this.structures ? "up to detail " + this.structureDetail + this.structureFlags() : "off")
 			+ ", parentUpdates=" + this.updateParentSections
 			+ ", parentSections=" + this.generateParentSections
 			+ ", cellCentre=" + this.sampleCellCenter
-			+ (this.structures && this.fullStructurePrecompute ? " (full precompute)" : "")
-			+ ", cpu=" + this.cpuLoad.id() + (this.generatorThreads > 0 ? " (" + this.generatorThreads + " threads)" : "")
+			+ ", cpu="+ this.cpuLoad.id() + (this.generatorThreads > 0 ? " (" + this.generatorThreads + " threads)" : "")
 			+ ", priority=" + this.threadPriority.id()
 			+ ", memory=" + this.memoryLoad.id() + (this.memoryLoad == MemoryLoad.AUTO ? " (" + this.memoryLoad.resolve().id() + ")" : "")
 			+ ", dhChunkLods=" + this.dhChunkLodBuilding

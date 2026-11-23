@@ -80,7 +80,16 @@ public final class LodStructures {
 	final BigGlobeScriptedChunkGenerator generator;
 	final StructureLocator.Context locatorContext;
 	final LodStructureLocator locator;
+	/** For the sets of ocean monuments ({@link Placement#centred}): rules out chunks by their centre column's biomes. */
+	final LodStructureLocator centredLocator;
 	final SortedOverriders overriders;
+	/**
+	 * Per raw overrider (Big Globe's order): only keeps caves away from structures, so it is left out of quads whose
+	 * hints do not carve (see {@link CaveOverriders}). All false with {@code fullStructurePrecompute} or
+	 * {@code skipCaveOverriders} off.
+	 */
+	final boolean[] caveOnly;
+	private final CaveOverriders.Result caveDecision;
 	final Registry<Structure> structureRegistry;
 	final StructureIndex index;
 	final String name;
@@ -102,6 +111,8 @@ public final class LodStructures {
 	final AtomicLong sections = new AtomicLong(), sectionsWithBlocks = new AtomicLong(), pieces = new AtomicLong(), placeNanos = new AtomicLong();
 	final AtomicLong placementFailures = new AtomicLong();
 	final AtomicLong overriddenQuads = new AtomicLong(), overrideNanos = new AtomicLong();
+	/** Quads near structures that left out cave-only overriders (only those, for quads counted nowhere else). */
+	final AtomicLong caveSkippedQuads = new AtomicLong(), caveOnlyQuads = new AtomicLong();
 	private final AtomicInteger reported = new AtomicInteger();
 	/** The generator is closing: scripts start failing as the server takes its registries away, which is not news. */
 	private volatile boolean closing;
@@ -115,11 +126,19 @@ public final class LodStructures {
 		this.levelMaxY = level.getMinY() + level.getHeight();
 		this.columnSeed = generator.columnSeed;
 		this.locatorContext = new StructureLocator.Context(generator, generator.configuredColumnFactory(level, ColumnUsage.GENERIC.dhHints(0)), level);
-		this.locator = new LodStructureLocator(generator.structureLocator());
+		GlobeConfig config = GlobeConfig.get();
+		this.locator = new LodStructureLocator(generator.structureLocator(), false);
+		this.centredLocator = config.earlyBiomeCheck ? new LodStructureLocator(generator.structureLocator(), true) : this.locator;
 		this.overriders = generator.getOverriders();
 		this.structureRegistry = StructureLocator.structureRegistry(level);
-		this.fullDetail = GlobeConfig.get().structureDetail;
-		this.fullPrecompute = GlobeConfig.get().fullStructurePrecompute;
+		this.fullDetail = config.structureDetail;
+		this.fullPrecompute = config.fullStructurePrecompute;
+		Holder<ColumnValueOverrider.Entry>[] raw = this.overriders.rawColumnValues.overriders();
+		// with the full precompute every quad computes cave noise anyway, and stays exactly like Big Globe's chunks
+		this.caveDecision = config.skipCaveOverriders && !this.fullPrecompute
+			? CaveOverriders.find(generator, raw)
+			: CaveOverriders.Result.none(raw.length, "");
+		this.caveOnly = this.caveDecision.caveOnly();
 		this.sampler = level.getChunkSource().randomState().sampler();
 		DifficultyInstance difficulty = null;
 		try {
@@ -163,18 +182,22 @@ public final class LodStructures {
 				}
 				int radius = 0;
 				boolean visible = false;
+				boolean script = value.placement() instanceof ScriptedStructurePlacement;
+				// script placements choose their own positions and biomes; vanilla ones start structures in a chunk
+				boolean centred = !script && !value.structures().isEmpty();
 				for (Object selection : value.structures()) {
 					@SuppressWarnings("unchecked")
 					Holder<Structure> structure = (Holder<Structure>)(((StructureSelectionEntry)(selection)).structure());
 					radius = Math.max(radius, radiusOf(structure));
 					if (!lodless(structure, lodlessStructures, lodlessTypes)) visible = true;
+					if (!LodStructureLocator.centredOnChunk(structure)) centred = false;
 				}
 				if (!visible) {
 					left.add(setName);
 					continue;
 				}
 				int tier = radius >= GIANT_RADIUS ? 2 : (radius >= LARGE_RADIUS ? 1 : 0);
-				placements.add(new Placement(placements.size(), set, setName, radius, tier, value.placement() instanceof ScriptedStructurePlacement));
+				placements.add(new Placement(placements.size(), set, setName, radius, tier, script, centred));
 			}
 			if (placements.isEmpty()) {
 				SeedGenGlobe.LOGGER.info("SeedGenGlobe: {} has no structures that show in LODs.", name);
@@ -191,6 +214,18 @@ public final class LodStructures {
 				structures.index.tiers[2].length,
 				left.isEmpty() ? "" : "; left out, as Big Globe does for LODs: " + String.join(", ", left)
 			);
+			String centred = structures.centredSets();
+			if (!centred.isEmpty()) {
+				SeedGenGlobe.LOGGER.info(
+					"SeedGenGlobe: {} checks the centre column of a chunk for {}'s biomes before Minecraft looks at its surroundings{}",
+					name,
+					centred,
+					structures.centredLocator == structures.locator ? " (off: earlyBiomeCheck=false)" : ""
+				);
+			}
+			if (!structures.caveDecision.note().isEmpty()) {
+				SeedGenGlobe.LOGGER.info("SeedGenGlobe: of Big Globe's cave-only structure overriders, {} {}", name, structures.caveDecision.note());
+			}
 			return structures;
 		}
 		catch (RuntimeException | LinkageError error) {
@@ -277,6 +312,35 @@ public final class LodStructures {
 	/** Whether {@link #precompute} can describe every combination of this generator's raw overriders. */
 	boolean filteredPrecompute() {
 		return !this.fullPrecompute && this.overriders.rawColumnValues.overriders().length <= 64;
+	}
+
+	/** The raw overriders of a structure that still run where the hints do not carve: all but the cave-only ones. */
+	int[] surfaceOverriders(int[] rawOverriders) {
+		int kept = 0;
+		for (int index : rawOverriders) {
+			if (!this.caveOnly[index]) kept++;
+		}
+		if (kept == rawOverriders.length) return rawOverriders;
+		int[] surface = new int[kept];
+		kept = 0;
+		for (int index : rawOverriders) {
+			if (!this.caveOnly[index]) surface[kept++] = index;
+		}
+		return surface;
+	}
+
+	/** The structure sets whose chunks are checked by their centre column's biomes, for the log. */
+	String centredSets() {
+		List<String> names = new ArrayList<>();
+		for (Placement placement : this.index.all) {
+			if (placement.centred()) names.add(placement.name());
+		}
+		return String.join(", ", names);
+	}
+
+	/** The locator a structure set's placement reports to. */
+	LodStructureLocator locatorFor(Placement placement) {
+		return placement.centred() ? this.centredLocator : this.locator;
 	}
 
 	public StructureFrame newFrame(SectionSampler sampler) {
@@ -384,7 +448,29 @@ public final class LodStructures {
 		));
 		String breakdown = this.lookupBreakdown(6);
 		if (!breakdown.isEmpty()) lines.add("Structure lookup time by set: " + breakdown);
-		if (!this.fullPrecompute) lines.add(String.format(Locale.ROOT, "Structure terrain: inputs computed for %d combinations of overriders", this.precomputes.size()));
+		long checked = this.centredLocator.checked.get();
+		if (this.centredLocator != this.locator && checked > 0L) {
+			long rejected = this.centredLocator.rejected.get();
+			lines.add(String.format(
+				Locale.ROOT,
+				"Early biome check (%s): %,d of %,d candidate chunks (%.0f%%) ruled out by the biomes of their centre column",
+				this.centredSets(), rejected, checked, 100.0D * rejected / checked
+			));
+		}
+		if (!this.fullPrecompute) {
+			StringBuilder line = new StringBuilder(String.format(Locale.ROOT, "Structure terrain: inputs computed for %d combinations of overriders", this.precomputes.size()));
+			if (this.caveDecision.count() > 0) {
+				line.append(String.format(
+					Locale.ROOT,
+					"; %d cave-only overriders left out in %,d quads that are not carved (%,d of them needed no other overrider)",
+					this.caveDecision.count(), this.caveSkippedQuads.get(), this.caveOnlyQuads.get()
+				));
+			}
+			else if (!this.caveDecision.note().isEmpty()) {
+				line.append("; cave-only overriders: ").append(this.caveDecision.note());
+			}
+			lines.add(line.toString());
+		}
 		return lines;
 	}
 

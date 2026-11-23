@@ -82,6 +82,12 @@ section takes a few CPU-seconds whatever its size (much more with structures far
   longer show in LODs.
 - Server tps priority (`yieldToServer`) runs fewer sections at once while the server falls behind 20 ticks per
   second or the heap is nearly full, and speeds up again afterwards.
+- Next to structures, Big Globe's overriders reshape the terrain. The ones that only keep caves out from under
+  villages, houses, campfires, lakes, wells and windmills are left out of LODs that are not carved
+  (`skipCaveOverriders`): computing the cave noise they change took a third of all generation time near structures,
+  and the Fill underground never reads it. Ocean monuments are first checked against the biomes of their chunk's
+  centre column (`earlyBiomeCheck`), like Minecraft 26.3's early structure biome checks, before Minecraft samples
+  225 biome columns around each candidate.
 - Progress: the overlay (`progressOverlay`) shows sections running and waiting, the speed, how far out LODs and the
   map are complete and what slows generation down; the chat (`chatProgress`) says when they are complete out to 64,
   128, 256, ... chunks and when everything is done; and while sections are generated the log gets a summary
@@ -94,13 +100,17 @@ section takes a few CPU-seconds whatever its size (much more with structures far
 
 ## Requirements
 
-- Minecraft 26.1.x on Fabric (built for 26.1.2), Fabric Loader 0.19.5 or newer (0.20.1 works), Fabric API, Java 25
+- Minecraft 26.1.x on Fabric (built for 26.1.2), Fabric Loader 0.19.5 or newer (0.20.1 works), Fabric API, Java 25.
+  The same jar also loads on Minecraft 26.2 (see the Distant Horizons line)
 - Distant Horizons 3.0.x (API 6). Built and checked against 3.0.3-b with the atlasfix patch (which only touches
   DH's Iris texture code, so the plain 3.0.3-b works the same). On other versions the generator keeps working; any
-  of SeedGenGlobe's DH mixins that do not fit are left out and listed on the status page
-- Big Globe 6.x (checked against 6.3.0)
-- Optional: Mod Menu 18.x (the settings screen), Xaero's World Map 1.47.x and Xaero's Minimap 26.6.x (see below),
-  Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLu
+  of SeedGenGlobe's DH mixins that do not fit are left out and listed on the status page. There is no 3.0.x for
+  Minecraft 26.2 (its first build for 26.2 is 3.1.0-b); with 3.3.3 for 26.2, three mixins are left out (multiplayer
+  client generation's queue integration, `dhChunkLodBuilding` and the Vertigo guard, Big Globe colours), and 3.3.3
+  does not load next to Vertigo
+- Big Globe 6.x (checked against 6.4.0, its builds for Minecraft 26.1.2 and 26.2)
+- Optional: Mod Menu (18.x on 26.1, 20.x on 26.2; the settings screen), Xaero's World Map 1.47.x and Xaero's Minimap
+  26.6.x (see below), Vertigo, Iris, Sodium, Lithium, C2ME, Noisium, ScalableLux
 
 ## Where to install it
 
@@ -328,6 +338,8 @@ of sections.)
 | `maxDetailLevel` | Coarsest detail level | `15` | Coarsest Distant Horizons detail level generated directly (0-15). LOD columns are 2^n blocks wide. (0-15) *Takes effect when a world is loaded again.* |
 | `sampleCellCenter` | Sample cell centres | `true` | Sample the centre of each LOD cell instead of its corner. *Takes effect when a world is loaded again.* |
 | `fullStructurePrecompute` | Full structure precompute | `false` | Before structures reshape the terrain around them, compute every column value any of Big Globe's structure overriders reads, as Big Globe's chunk generator does (1.3.0). Off computes only what the overriders of the structures nearby read, which saves time next to structures; turn on if LODs there differ from the real terrain. *Takes effect when a world is loaded again.* |
+| `skipCaveOverriders` | Skip cave-only overriders | `true` | Next to villages, houses, campfires, lakes, wells and windmills, Big Globe raises its cave noise under the surface so no cave opens beneath them. Computing that noise was a third of all generation time near structures, yet LODs that are not carved (the Fill underground) never read it. On: those overriders are left out of LODs that are not carved, but only when they are exactly the scripts SeedGenGlobe was checked against and Big Globe's cave carver is the only terrain layer that reads cave noise. Off runs them as 1.4.0 did. Full structure precompute turns this off. *Takes effect when a world is loaded again.* |
+| `earlyBiomeCheck` | Early monument biome check | `true` | Before Minecraft samples the surroundings of a possible ocean monument (225 biome columns for every candidate chunk), check that the centre column of its chunk, where Big Globe checks the monument's biome in the end, has a biome the monument allows at some height, like the early biome checks of Minecraft 26.3. The same monuments, found faster on land. Off: every candidate is sampled as in 1.4.0. *Takes effect when a world is loaded again.* |
 | `updateParentSections` | Update parent sections | `false` | Let generated sections also be merged into their coarser parents (Distant Horizons' default). Such a parent holds only part of its area until all of it is generated, and Distant Horizons draws it in place of finer sections still loading. Off avoids those holes; Generate parent sections makes the parents whole instead. *Takes effect when a world is loaded again.* |
 | `generateParentSections` | Generate parent sections | `true` | Let Distant Horizons also ask for the coarser sections it draws in place of finer ones while those load and after you move away, in dimensions SeedGenGlobe generates. Off: those stay empty, so moving shows holes that only close when you come near. Costs about a third more sections. |
 | `generatorPriority` | (file only) | `2026` | Distant Horizons world generator override priority. Must differ from other generator mods; higher than Big Globe's own (10). (11-1000000) *Takes effect when a world is loaded again.* |
@@ -366,7 +378,9 @@ Map and Minimap and Fabric API, including every mixin target. `tools/offline-bui
 
 For normal development use Gradle with Fabric Loom: put the Distant Horizons and Big Globe jars (and optionally
 Vertigo) into `libs/` (see `libs/README.txt`) and run `./gradlew build`. `./gradlew check` also runs the logic
-tests. The Gradle files follow Big Globe's own 26.1.2 setup (Loom 1.18-SNAPSHOT, Gradle 9.8) but could not be run
+tests, among them one that compares Big Globe's cave-only overriders and terrain layers in the jar in `libs/` with the
+texts `skipCaveOverriders` was reviewed against. To see whether a built jar links on another Minecraft version, run
+`java tools/offline-build/PortCheck.java <SeedGenGlobe jar> <Minecraft jar> <its libraries and mods...>`. The Gradle files follow Big Globe's own 26.1.2 setup (Loom 1.18-SNAPSHOT, Gradle 9.8) but could not be run
 here, so a first run may need small adjustments.
 
 `test-offline.sh` runs the logic tests without Gradle: ColumnProfile against the data point rules DH enforces and

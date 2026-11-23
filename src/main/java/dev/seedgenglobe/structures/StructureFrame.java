@@ -143,6 +143,8 @@ public final class StructureFrame {
 	 * the overriders read are computed (see {@link LodStructures#precompute}), then each overrider gets the structures whose bounding box comes
 	 * within their own radius of the chunk. Overriders without such structures are skipped (Big Globe's would loop
 	 * over nothing), and quads without any are left alone, as Big Globe's own LOD generator leaves all columns.
+	 * Where the hints do not carve, the overriders that only keep caves away from structures are skipped too (see
+	 * {@link CaveOverriders}): nothing there reads what they change.
 	 *
 	 * @param x the first column of the quad; the others are {@code step} blocks further in x and z
 	 */
@@ -150,17 +152,26 @@ public final class StructureFrame {
 		if (!this.active) return;
 		int minX = x & ~15, minZ = z & ~15;
 		int maxX = ((x + step) & ~15) | 15, maxZ = ((z + step) & ~15) | 15;
-		boolean any = false;
+		// the four columns of a quad share their hints
+		boolean carve = quad.object00.hints().carve();
+		boolean any = false, skipped = false;
 		long mask = 0L;
 		for (Candidate candidate : this.nearby) {
 			if (candidate.rawOverriders.length == 0) continue;
 			int radius = candidate.radius;
 			if (!candidate.box.intersects(minX - radius, minZ - radius, maxX + radius, maxZ + radius)) continue;
-			for (int index : candidate.rawOverriders) {
+			int[] overriders = carve ? candidate.rawOverriders : candidate.surfaceOverriders;
+			if (overriders.length != candidate.rawOverriders.length) skipped = true;
+			if (overriders.length == 0) continue;
+			for (int index : overriders) {
 				this.lists[index].add(candidate.start);
 				if (index < 64) mask |= 1L << index;
 			}
 			any = true;
+		}
+		if (skipped) {
+			this.owner.caveSkippedQuads.incrementAndGet();
+			if (!any) this.owner.caveOnlyQuads.incrementAndGet();
 		}
 		if (!any) return;
 		long start = System.nanoTime();

@@ -61,8 +61,11 @@ final class StructureIndex {
 	 * One structure set this index looks for.
 	 *
 	 * @param tier the coarsest tier of detail levels the set is generated at (see {@link LodStructures#tier})
+	 * @param perCell a script placement, asked about every 64-block cell
+	 * @param centred every structure of the set has its biome checked in the centre column of its chunk (ocean
+	 * monuments), so that column's biomes can rule a chunk out early (see {@link LodStructureLocator})
 	 */
-	record Placement(int index, Holder<StructureSet> holder, String name, int radius, int tier, boolean perCell) {}
+	record Placement(int index, Holder<StructureSet> holder, String name, int radius, int tier, boolean perCell, boolean centred) {}
 
 	/** One structure start found in a tile. */
 	static final class Candidate {
@@ -82,6 +85,8 @@ final class StructureIndex {
 		final boolean raw;
 		/** Which of the generator's raw column value overriders apply to it. */
 		final int[] rawOverriders;
+		/** The ones of those that also run where the hints do not carve: all but the cave-only ones (see {@link CaveOverriders}). */
+		final int[] surfaceOverriders;
 		/**
 		 * Per detail level: 0 = not checked yet, 1 = survives the collision checks against the sets looked up at that
 		 * level, -1 = removed by them. Racing checks come to the same answer.
@@ -111,6 +116,7 @@ final class StructureIndex {
 			this.namespace = key.getNamespace();
 			this.raw = this.structure instanceof RawGenerationStructure;
 			this.rawOverriders = owner.overriders.rawColumnValues.getIndices(this.structure);
+			this.surfaceOverriders = owner.surfaceOverriders(this.rawOverriders);
 		}
 
 		@Override
@@ -286,7 +292,7 @@ final class StructureIndex {
 			((SmartStructurePlacement)(((StructureSet)(placement.holder().value())).placement()))
 				.bigglobe_generateStructuresInArea(
 					new SmartStructurePlacement.Context(
-						this.owner.locator,
+						this.owner.locatorFor(placement),
 						this.owner.locatorContext,
 						placement.holder(),
 						columns,

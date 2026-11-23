@@ -66,7 +66,7 @@ public final class ModCompat {
 		if (DISTANT_HORIZONS) lines.add("Distant Horizons " + version("distanthorizons") + ": SeedGenGlobe registers as its world generator for Big Globe dimensions.");
 		if (BIG_GLOBE) lines.add("Big Globe " + version("bigglobe") + ": terrain is computed by Big Globe's own column scripts, so LODs match real chunks.");
 		if (VERTIGO) lines.add("Vertigo: chunks whose top or bottom sections were not synced are kept from overwriting LODs (vertigoGuard).");
-		if (C2ME) lines.add("C2ME: LOD columns are computed on Distant Horizons' threads only, never on Big Globe's chunk worker pool that C2ME drives.");
+		if (C2ME) lines.add("C2ME: LOD columns are computed on SeedGenGlobe's own threads, never on Big Globe's chunk worker pool that C2ME drives.");
 		if (SCALABLELUX) lines.add("ScalableLux: LOD sky light is computed from Big Globe's column data, so no light engine work is queued for distant terrain.");
 		if (NOISIUM) lines.add("Noisium: no interaction. Big Globe terrain does not use the vanilla noise router that Noisium optimises.");
 		if (LITHIUM) lines.add("Lithium: no interaction. SeedGenGlobe touches no game logic that Lithium changes.");

@@ -43,7 +43,7 @@ final class ProgressOverlay {
 
 	private static void render(GuiGraphicsExtractor graphics) {
 		Minecraft minecraft = Minecraft.getInstance();
-		if (minecraft.options.hideGui || minecraft.player == null || minecraft.level == null) return;
+		if (minecraft.player == null || minecraft.level == null || ClientScreens.hudHidden(minecraft)) return;
 		long now = System.nanoTime();
 		if (now - builtAt > 500_000_000L) {
 			builtAt = now;
